@@ -33,6 +33,7 @@ const sidebar       = document.getElementById('sidebar');
 const rightPanel    = document.getElementById('right-panel');
 const layoutEl      = document.getElementById('dashboard');
 const mobileBackdrop = document.getElementById('mobile-backdrop');
+const SPLASH_MS = 4000;
 
 // ─── Boot ──────────────────────────────────────────────────────────────────────
 function clearSplashFallback() {
@@ -69,7 +70,7 @@ async function finishBoot() {
 }
 
 function startBoot() {
-  setTimeout(finishBoot, 1200);
+  setTimeout(finishBoot, SPLASH_MS);
 }
 
 if (document.readyState === 'loading') {
