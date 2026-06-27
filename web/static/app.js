@@ -1,66 +1,198 @@
-/* Hassan AI Agent — frontend */
-
+/* Hassan AI Agent — frontend with auth */
 'use strict';
 
-// ─── State ───────────────────────────────────────────────────────────────────
-let messages = [];          // [{role, content}]
-let sessions = [];          // [{id, title, messages}]
+// ─── State ─────────────────────────────────────────────────────────────────────
+let messages   = [];
+let sessions   = [];
 let activeSession = null;
-let isLoading = false;
-let settings = loadSettings();
+let isLoading  = false;
+let currentUser = null;
+let authToken   = localStorage.getItem('hassan_token') || '';
+let settings    = loadSettings();
 
-// ─── DOM refs ─────────────────────────────────────────────────────────────────
-const welcomeScreen  = document.getElementById('welcome-screen');
-const chatMessages   = document.getElementById('chat-messages');
-const userInput      = document.getElementById('user-input');
-const sendBtn        = document.getElementById('send-btn');
-const charCount      = document.getElementById('char-count');
-const historyList    = document.getElementById('history-list');
-const settingsModal  = document.getElementById('settings-modal');
-const settingsStatus = document.getElementById('settings-status');
-const topbarTitle    = document.getElementById('topbar-title');
+// ─── DOM refs ──────────────────────────────────────────────────────────────────
+const splash        = document.getElementById('splash');
+const authScreen    = document.getElementById('auth-screen');
+const dashboard     = document.getElementById('dashboard');
+const welcomeScreen = document.getElementById('welcome-screen');
+const chatMessages  = document.getElementById('chat-messages');
+const userInput     = document.getElementById('user-input');
+const sendBtn       = document.getElementById('send-btn');
+const charCount     = document.getElementById('char-count');
+const historyList   = document.getElementById('history-list');
+const settingsModal = document.getElementById('settings-modal');
+const settingsStatus= document.getElementById('settings-status');
+const topbarTitle   = document.getElementById('topbar-title');
 
-// ─── Boot ─────────────────────────────────────────────────────────────────────
-(function init() {
+// ─── Boot ──────────────────────────────────────────────────────────────────────
+(async function boot() {
   applySavedSettings();
-  loadSessions();
-  renderHistory();
-  bindEvents();
-  userInput.focus();
+
+  // Show splash for 2.8s then route
+  setTimeout(async () => {
+    splash.classList.add('fade-out');
+    await sleep(480);
+    splash.style.display = 'none';
+
+    if (authToken) {
+      const ok = await verifyToken();
+      if (ok) { showDashboard(); return; }
+    }
+    showAuth('login');
+  }, 2900);
 })();
 
-// ─── Settings persistence ─────────────────────────────────────────────────────
-function loadSettings() {
-  try { return JSON.parse(localStorage.getItem('hassan_settings') || '{}'); }
-  catch { return {}; }
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// ─── Auth routing ──────────────────────────────────────────────────────────────
+function showAuth(mode) {
+  authScreen.style.display = 'flex';
+  dashboard.style.display  = 'none';
+  showAuthMode(mode);
+  bindAuthEvents();
 }
 
-function saveSettings(obj) {
-  settings = { ...settings, ...obj };
-  localStorage.setItem('hassan_settings', JSON.stringify(settings));
+function showAuthMode(mode) {
+  document.getElementById('login-card').style.display  = mode === 'login'  ? 'block' : 'none';
+  document.getElementById('signup-card').style.display = mode === 'signup' ? 'block' : 'none';
 }
 
-function applySavedSettings() {
-  const el = (id) => document.getElementById(id);
-  if (settings.provider) el('set-provider').value = settings.provider;
-  if (settings.api_key)  el('set-api-key').value  = settings.api_key;
-  if (settings.cursor_api_key) el('set-cursor-key').value = settings.cursor_api_key;
-  if (settings.model)    el('set-model').value    = settings.model;
-  if (settings.base_url) el('set-base-url').value = settings.base_url;
-  if (settings.theme)    applyTheme(settings.theme);
-  toggleCursorRow();
+function showDashboard() {
+  authScreen.style.display = 'none';
+  dashboard.style.display  = 'grid';
+  initDashboard();
 }
 
-// ─── Session management ────────────────────────────────────────────────────────
+// ─── Token verify ─────────────────────────────────────────────────────────────
+async function verifyToken() {
+  try {
+    const r = await fetch('/api/auth/me', {
+      headers: { 'x-token': authToken },
+    });
+    if (!r.ok) { authToken = ''; localStorage.removeItem('hassan_token'); return false; }
+    const data = await r.json();
+    currentUser = data;
+    return true;
+  } catch { return false; }
+}
+
+// ─── Auth events ──────────────────────────────────────────────────────────────
+let authEventsBound = false;
+function bindAuthEvents() {
+  if (authEventsBound) return;
+  authEventsBound = true;
+
+  document.getElementById('go-signup').addEventListener('click', () => showAuthMode('signup'));
+  document.getElementById('go-login').addEventListener('click', () => showAuthMode('login'));
+
+  document.getElementById('login-btn').addEventListener('click', doLogin);
+  document.getElementById('signup-btn').addEventListener('click', doSignup);
+
+  document.getElementById('login-password').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+  document.getElementById('signup-confirm').addEventListener('keydown', e => { if (e.key === 'Enter') doSignup(); });
+}
+
+async function doLogin() {
+  const username = document.getElementById('login-username').value.trim();
+  const password = document.getElementById('login-password').value;
+  const errEl    = document.getElementById('login-error');
+  const btn      = document.getElementById('login-btn');
+  const btnText  = document.getElementById('login-btn-text');
+  const spinner  = document.getElementById('login-spinner');
+
+  errEl.textContent = '';
+  if (!username || !password) { errEl.textContent = 'Please fill in all fields.'; return; }
+
+  btn.disabled = true;
+  btnText.style.display = 'none';
+  spinner.style.display = 'block';
+
+  try {
+    const r = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    const data = await r.json();
+    if (!r.ok) { errEl.textContent = data.detail || 'Login failed.'; return; }
+    authToken = data.token;
+    currentUser = { username: data.username };
+    localStorage.setItem('hassan_token', authToken);
+    showDashboard();
+  } catch (e) {
+    errEl.textContent = 'Network error. Try again.';
+  } finally {
+    btn.disabled = false;
+    btnText.style.display = '';
+    spinner.style.display = 'none';
+  }
+}
+
+async function doSignup() {
+  const username = document.getElementById('signup-username').value.trim();
+  const password = document.getElementById('signup-password').value;
+  const confirm  = document.getElementById('signup-confirm').value;
+  const errEl    = document.getElementById('signup-error');
+  const btn      = document.getElementById('signup-btn');
+  const btnText  = document.getElementById('signup-btn-text');
+  const spinner  = document.getElementById('signup-spinner');
+
+  errEl.textContent = '';
+  if (!username || !password) { errEl.textContent = 'Please fill in all fields.'; return; }
+  if (password !== confirm)   { errEl.textContent = 'Passwords do not match.'; return; }
+  if (password.length < 6)   { errEl.textContent = 'Password must be at least 6 characters.'; return; }
+
+  btn.disabled = true;
+  btnText.style.display = 'none';
+  spinner.style.display = 'block';
+
+  try {
+    const r = await fetch('/api/auth/signup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    const data = await r.json();
+    if (!r.ok) { errEl.textContent = data.detail || 'Signup failed.'; return; }
+    authToken = data.token;
+    currentUser = { username: data.username };
+    localStorage.setItem('hassan_token', authToken);
+    showDashboard();
+  } catch (e) {
+    errEl.textContent = 'Network error. Try again.';
+  } finally {
+    btn.disabled = false;
+    btnText.style.display = '';
+    spinner.style.display = 'none';
+  }
+}
+
+// ─── Dashboard init ────────────────────────────────────────────────────────────
+function initDashboard() {
+  loadSessions();
+  renderHistory();
+  bindDashboardEvents();
+  applySavedSettings();
+
+  if (currentUser) {
+    const name = currentUser.username;
+    const el = document.getElementById('sidebar-username');
+    if (el) el.textContent = name;
+    const av = document.getElementById('user-avatar-initials');
+    if (av) av.textContent = name.charAt(0).toUpperCase();
+  }
+
+  userInput.focus();
+}
+
+// ─── Sessions ──────────────────────────────────────────────────────────────────
 function loadSessions() {
   try { sessions = JSON.parse(localStorage.getItem('hassan_sessions') || '[]'); }
   catch { sessions = []; }
 }
-
 function persistSessions() {
   localStorage.setItem('hassan_sessions', JSON.stringify(sessions.slice(0, 80)));
 }
-
 function newSession() {
   const id = Date.now().toString();
   const sess = { id, title: 'New Chat', messages: [] };
@@ -70,7 +202,6 @@ function newSession() {
   persistSessions();
   return sess;
 }
-
 function openSession(id) {
   const sess = sessions.find(s => s.id === id);
   if (!sess) return;
@@ -78,20 +209,19 @@ function openSession(id) {
   messages = sess.messages;
   renderHistory();
   renderAllMessages();
-  if (messages.length > 0) showChat();
-  else showWelcome();
+  messages.length > 0 ? showChat() : showWelcomeView();
 }
-
 function updateSessionTitle(sess, firstMsg) {
   sess.title = firstMsg.length > 50 ? firstMsg.slice(0, 47) + '...' : firstMsg;
 }
 
-// ─── Render history list ───────────────────────────────────────────────────────
+// ─── Render history ────────────────────────────────────────────────────────────
 function renderHistory() {
+  if (!historyList) return;
   if (sessions.length === 0) {
     historyList.innerHTML = `
       <div class="right-panel-empty">
-        <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
           <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
         </svg>
         No chats yet
@@ -99,21 +229,19 @@ function renderHistory() {
     return;
   }
   historyList.innerHTML = sessions.map(s => `
-    <div class="history-item ${activeSession && activeSession.id === s.id ? 'active' : ''}"
-         data-id="${s.id}">
+    <div class="history-item ${activeSession && activeSession.id === s.id ? 'active' : ''}" data-id="${s.id}">
       <div class="history-check"></div>
       <div class="history-text">
-        <div class="history-title">${escHtml(s.title)}</div>
+        <div class="history-title">${esc(s.title)}</div>
         <div class="history-preview">${s.messages.length} message${s.messages.length !== 1 ? 's' : ''}</div>
       </div>
     </div>`).join('');
-
   historyList.querySelectorAll('.history-item').forEach(el => {
     el.addEventListener('click', () => openSession(el.dataset.id));
   });
 }
 
-// ─── Render messages ──────────────────────────────────────────────────────────
+// ─── Render messages ───────────────────────────────────────────────────────────
 function renderAllMessages() {
   chatMessages.innerHTML = '';
   messages.forEach(m => appendMessage(m.role, m.content, false));
@@ -124,30 +252,26 @@ function appendMessage(role, content, animate = true) {
   row.className = `msg-row ${role}`;
   if (!animate) row.style.animation = 'none';
 
-  const initial = role === 'user' ? 'U' : 'H';
-  const avatarBg = role === 'user' ? '' : '';
+  const avatarHtml = role === 'user'
+    ? `<div class="msg-avatar">${currentUser ? currentUser.username.charAt(0).toUpperCase() : 'U'}</div>`
+    : `<div class="msg-avatar"><img src="/static/logo.jpg" alt="H" /></div>`;
 
   row.innerHTML = `
-    <div class="msg-avatar">${initial}</div>
+    ${avatarHtml}
     <div class="msg-content">
       ${role === 'user'
-        ? `<div class="msg-bubble">${escHtml(content)}</div>`
-        : `<div class="kimi-ai-bubble">${renderMarkdown(content)}</div>`}
+        ? `<div class="msg-bubble">${esc(content)}</div>`
+        : `<div class="kimi-ai-bubble">${renderMD(content)}</div>`}
     </div>`;
-
   chatMessages.appendChild(row);
   addCopyButtons(row);
   chatMessages.scrollTop = chatMessages.scrollHeight;
 }
 
-function renderMarkdown(text) {
-  if (typeof marked === 'undefined') return escHtml(text).replace(/\n/g, '<br>');
-  try {
-    marked.setOptions({ breaks: true, gfm: true });
-    return marked.parse(text);
-  } catch {
-    return escHtml(text).replace(/\n/g, '<br>');
-  }
+function renderMD(text) {
+  if (typeof marked === 'undefined') return esc(text).replace(/\n/g, '<br>');
+  try { marked.setOptions({ breaks: true, gfm: true }); return marked.parse(text); }
+  catch { return esc(text).replace(/\n/g, '<br>'); }
 }
 
 function addCopyButtons(container) {
@@ -163,8 +287,7 @@ function addCopyButtons(container) {
     btn.textContent = 'Copy';
     btn.addEventListener('click', () => {
       navigator.clipboard.writeText(code.innerText).then(() => {
-        btn.textContent = 'Copied!';
-        btn.classList.add('copied');
+        btn.textContent = 'Copied!'; btn.classList.add('copied');
         setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2000);
       });
     });
@@ -172,40 +295,36 @@ function addCopyButtons(container) {
   });
 }
 
-// ─── Show/hide views ──────────────────────────────────────────────────────────
+// ─── View switching ────────────────────────────────────────────────────────────
 function showChat() {
   welcomeScreen.style.display = 'none';
-  chatMessages.style.display = 'flex';
-  topbarTitle.textContent = activeSession?.title || 'AI Chat';
+  chatMessages.style.display  = 'flex';
+  if (topbarTitle) topbarTitle.textContent = activeSession?.title || 'AI Chat';
 }
-function showWelcome() {
+function showWelcomeView() {
   welcomeScreen.style.display = 'flex';
-  chatMessages.style.display = 'none';
-  topbarTitle.textContent = 'AI Chat';
+  chatMessages.style.display  = 'none';
+  if (topbarTitle) topbarTitle.textContent = 'AI Chat';
 }
 
-// ─── Typing indicator ─────────────────────────────────────────────────────────
+// ─── Typing indicator ──────────────────────────────────────────────────────────
 let typingRow = null;
 function showTyping() {
   typingRow = document.createElement('div');
   typingRow.className = 'msg-row assistant';
   typingRow.innerHTML = `
-    <div class="msg-avatar">H</div>
+    <div class="msg-avatar"><img src="/static/logo.jpg" alt="H" /></div>
     <div class="msg-content">
       <div class="typing-indicator">
-        <div class="typing-dot"></div>
-        <div class="typing-dot"></div>
-        <div class="typing-dot"></div>
+        <div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div>
       </div>
     </div>`;
   chatMessages.appendChild(typingRow);
   chatMessages.scrollTop = chatMessages.scrollHeight;
 }
-function hideTyping() {
-  if (typingRow) { typingRow.remove(); typingRow = null; }
-}
+function hideTyping() { if (typingRow) { typingRow.remove(); typingRow = null; } }
 
-// ─── Send message ─────────────────────────────────────────────────────────────
+// ─── Send message ──────────────────────────────────────────────────────────────
 async function sendMessage(text) {
   text = (text || userInput.value).trim();
   if (!text || isLoading) return;
@@ -218,7 +337,7 @@ async function sendMessage(text) {
   appendMessage('user', text);
   userInput.value = '';
   userInput.style.height = 'auto';
-  charCount.textContent = '0';
+  if (charCount) charCount.textContent = '0';
   updateSendBtn();
   renderHistory();
 
@@ -227,9 +346,9 @@ async function sendMessage(text) {
   showTyping();
 
   try {
-    const res = await fetch('/api/chat', {
+    const r = await fetch('/api/chat', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-token': authToken },
       body: JSON.stringify({
         messages,
         provider: settings.provider || '',
@@ -239,12 +358,12 @@ async function sendMessage(text) {
         base_url: settings.base_url || '',
       }),
     });
-    const data = await res.json();
+    const data = await r.json();
     hideTyping();
-    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
-    const reply = data.reply || '';
-    messages.push({ role: 'assistant', content: reply });
-    appendMessage('assistant', reply);
+    if (r.status === 401) { showToast('Session expired — please sign in again.'); doLogout(); return; }
+    if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
+    messages.push({ role: 'assistant', content: data.reply });
+    appendMessage('assistant', data.reply);
     persistSessions();
     renderHistory();
   } catch (e) {
@@ -260,133 +379,124 @@ function setLoading(on) {
   sendBtn.classList.toggle('loading', on);
   userInput.disabled = on;
 }
-
-// ─── Input events ─────────────────────────────────────────────────────────────
 function updateSendBtn() {
   sendBtn.classList.toggle('active', userInput.value.trim().length > 0);
 }
 
-function bindEvents() {
+// ─── Logout ────────────────────────────────────────────────────────────────────
+async function doLogout() {
+  try { await fetch('/api/auth/logout', { method: 'POST', headers: { 'x-token': authToken } }); } catch {}
+  authToken = '';
+  currentUser = null;
+  localStorage.removeItem('hassan_token');
+  dashboard.style.display = 'none';
+  authEventsBound = false;
+  showAuth('login');
+}
+
+// ─── Dashboard events ──────────────────────────────────────────────────────────
+let dashEventsBound = false;
+function bindDashboardEvents() {
+  if (dashEventsBound) return;
+  dashEventsBound = true;
+
   userInput.addEventListener('input', () => {
     userInput.style.height = 'auto';
-    userInput.style.height = Math.min(userInput.scrollHeight, 180) + 'px';
-    charCount.textContent = userInput.value.length.toLocaleString();
+    userInput.style.height = Math.min(userInput.scrollHeight, 160) + 'px';
+    if (charCount) charCount.textContent = userInput.value.length.toLocaleString();
     updateSendBtn();
   });
-
-  userInput.addEventListener('keydown', e => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      sendMessage();
-    }
-  });
-
+  userInput.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
   sendBtn.addEventListener('click', () => sendMessage());
 
-  // Quick cards
   document.querySelectorAll('.quick-card').forEach(btn => {
     btn.addEventListener('click', () => sendMessage(btn.dataset.prompt));
   });
 
-  // New chat
   document.getElementById('new-chat-btn').addEventListener('click', () => {
-    newSession();
-    showWelcome();
-    renderHistory();
-    userInput.focus();
+    newSession(); showWelcomeView(); renderHistory(); userInput.focus();
   });
 
-  // Settings modal
-  document.getElementById('open-settings').addEventListener('click', openSettings);
+  document.getElementById('open-settings')?.addEventListener('click', openSettings);
+  document.getElementById('open-settings-top')?.addEventListener('click', openSettings);
   document.getElementById('close-settings').addEventListener('click', closeSettings);
-  settingsModal.addEventListener('click', e => {
-    if (e.target === settingsModal) closeSettings();
-  });
+  settingsModal.addEventListener('click', e => { if (e.target === settingsModal) closeSettings(); });
   document.getElementById('save-settings').addEventListener('click', doSaveSettings);
   document.getElementById('set-provider').addEventListener('change', toggleCursorRow);
 
-  // Theme
+  document.getElementById('logout-btn').addEventListener('click', doLogout);
+
   document.getElementById('theme-light').addEventListener('click', () => applyTheme('light'));
   document.getElementById('theme-dark').addEventListener('click', () => applyTheme('dark'));
 
-  // Keyboard shortcut ⌘K
   document.addEventListener('keydown', e => {
-    if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-      e.preventDefault();
-      document.getElementById('search-input').focus();
-    }
+    if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); document.getElementById('search-input')?.focus(); }
     if (e.key === 'Escape') closeSettings();
   });
 
-  // Nav items
   document.querySelectorAll('.nav-item[data-view]').forEach(item => {
     item.addEventListener('click', () => {
       document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
       item.classList.add('active');
-      topbarTitle.textContent = item.querySelector('span').textContent.trim();
+      if (topbarTitle) topbarTitle.textContent = item.querySelector('span').textContent.trim();
     });
   });
 }
 
-// ─── Settings modal ───────────────────────────────────────────────────────────
-function openSettings() {
-  settingsModal.classList.add('open');
-  settingsStatus.textContent = '';
-  settingsStatus.className = 'settings-note';
+// ─── Settings ──────────────────────────────────────────────────────────────────
+function loadSettings() {
+  try { return JSON.parse(localStorage.getItem('hassan_settings') || '{}'); }
+  catch { return {}; }
 }
-function closeSettings() {
-  settingsModal.classList.remove('open');
+function saveSettings(obj) {
+  settings = { ...settings, ...obj };
+  localStorage.setItem('hassan_settings', JSON.stringify(settings));
 }
-
+function applySavedSettings() {
+  const g = id => document.getElementById(id);
+  if (settings.provider && g('set-provider')) g('set-provider').value = settings.provider;
+  if (settings.api_key   && g('set-api-key'))  g('set-api-key').value  = settings.api_key;
+  if (settings.cursor_api_key && g('set-cursor-key')) g('set-cursor-key').value = settings.cursor_api_key;
+  if (settings.model     && g('set-model'))    g('set-model').value    = settings.model;
+  if (settings.base_url  && g('set-base-url')) g('set-base-url').value = settings.base_url;
+  if (settings.theme) applyTheme(settings.theme);
+  toggleCursorRow();
+}
+function openSettings() { settingsModal.classList.add('open'); settingsStatus.textContent = ''; settingsStatus.className = 'settings-note'; }
+function closeSettings() { settingsModal.classList.remove('open'); }
 function toggleCursorRow() {
-  const provider = document.getElementById('set-provider').value;
-  document.getElementById('cursor-key-row').style.display =
-    provider === 'cursor' ? 'flex' : 'none';
+  const el = document.getElementById('set-provider');
+  if (!el) return;
+  const row = document.getElementById('cursor-key-row');
+  if (row) row.style.display = el.value === 'cursor' ? 'flex' : 'none';
 }
-
 function doSaveSettings() {
-  const get = id => document.getElementById(id).value.trim();
-  const newSettings = {
-    provider:       get('set-provider'),
-    api_key:        get('set-api-key'),
-    cursor_api_key: get('set-cursor-key'),
-    model:          get('set-model'),
-    base_url:       get('set-base-url'),
-  };
-  saveSettings(newSettings);
+  const g = id => document.getElementById(id)?.value?.trim() || '';
+  saveSettings({ provider: g('set-provider'), api_key: g('set-api-key'), cursor_api_key: g('set-cursor-key'), model: g('set-model'), base_url: g('set-base-url') });
   settingsStatus.textContent = 'Settings saved!';
   settingsStatus.className = 'settings-note ok';
   setTimeout(closeSettings, 900);
 }
 
-// ─── Theme ────────────────────────────────────────────────────────────────────
+// ─── Theme ─────────────────────────────────────────────────────────────────────
 function applyTheme(theme) {
   document.documentElement.setAttribute('data-theme', theme);
-  document.getElementById('theme-light').classList.toggle('active', theme === 'light');
-  document.getElementById('theme-dark').classList.toggle('active', theme === 'dark');
+  document.getElementById('theme-light')?.classList.toggle('active', theme === 'light');
+  document.getElementById('theme-dark')?.classList.toggle('active', theme === 'dark');
   saveSettings({ theme });
 }
 
-// ─── Toast ────────────────────────────────────────────────────────────────────
+// ─── Toast ─────────────────────────────────────────────────────────────────────
 let toastTimer;
 function showToast(msg) {
   let t = document.querySelector('.toast');
-  if (!t) {
-    t = document.createElement('div');
-    t.className = 'toast';
-    document.body.appendChild(t);
-  }
-  t.textContent = msg;
-  t.classList.add('show');
+  if (!t) { t = document.createElement('div'); t.className = 'toast'; document.body.appendChild(t); }
+  t.textContent = msg; t.classList.add('show');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => t.classList.remove('show'), 4000);
 }
 
-// ─── Utils ────────────────────────────────────────────────────────────────────
-function escHtml(s) {
-  return String(s)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+// ─── Utils ─────────────────────────────────────────────────────────────────────
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }

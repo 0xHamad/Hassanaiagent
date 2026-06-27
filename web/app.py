@@ -1,13 +1,15 @@
-"""Hassan AI Agent — FastAPI web server."""
+"""Hassan AI Agent — FastAPI web server with auth."""
 
 from __future__ import annotations
 
-import json
+import hashlib
 import os
+import secrets
 import sys
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+import requests as http_requests
+from fastapi import FastAPI, HTTPException, Header
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -15,8 +17,8 @@ from pydantic import BaseModel
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from llm_router import LlmConfig, chat_completion, HASSAN_INTRO  # noqa: E402
-from hassan_prompt import CHAT_SYSTEM  # noqa: E402
+from llm_router import LlmConfig, chat_completion  # noqa: E402
+from hassan_prompt import CHAT_SYSTEM, HASSAN_INTRO  # noqa: E402
 
 
 def load_env() -> None:
@@ -33,13 +35,86 @@ def load_env() -> None:
 
 load_env()
 
+SUPABASE_URL = (
+    os.getenv("SUPABASE_URL")
+    or os.getenv("VITE_SUPABASE_URL")
+    or ""
+).rstrip("/")
+SUPABASE_KEY = (
+    os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+    or os.getenv("SUPABASE_ANON_KEY")
+    or os.getenv("VITE_SUPABASE_ANON_KEY")
+    or ""
+)
+
 app = FastAPI(title="Hassan AI Agent")
 
 HERE = Path(__file__).resolve().parent
 app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
 
-WEB_PASSWORD = os.getenv("WEB_PASSWORD", "").strip()
 _INDEX_HTML = (HERE / "templates" / "index.html").read_text(encoding="utf-8")
+
+
+# ─── Supabase helpers ─────────────────────────────────────────────────────────
+
+def _sb_headers() -> dict:
+    return {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type": "application/json",
+        "Prefer": "return=representation",
+    }
+
+
+def _sb_get(table: str, params: dict) -> list:
+    r = http_requests.get(
+        f"{SUPABASE_URL}/rest/v1/{table}",
+        headers=_sb_headers(),
+        params=params,
+        timeout=10,
+    )
+    r.raise_for_status()
+    return r.json()
+
+
+def _sb_insert(table: str, data: dict) -> dict:
+    r = http_requests.post(
+        f"{SUPABASE_URL}/rest/v1/{table}",
+        headers=_sb_headers(),
+        json=data,
+        timeout=10,
+    )
+    r.raise_for_status()
+    rows = r.json()
+    return rows[0] if rows else {}
+
+
+def _sb_delete(table: str, params: dict) -> None:
+    http_requests.delete(
+        f"{SUPABASE_URL}/rest/v1/{table}",
+        headers=_sb_headers(),
+        params=params,
+        timeout=10,
+    )
+
+
+# ─── Password helpers ─────────────────────────────────────────────────────────
+
+def _hash_password(password: str, salt: str) -> str:
+    return hashlib.pbkdf2_hmac(
+        "sha256", password.encode(), salt.encode(), 260_000
+    ).hex()
+
+
+def _verify_password(password: str, salt: str, stored_hash: str) -> bool:
+    return secrets.compare_digest(_hash_password(password, salt), stored_hash)
+
+
+# ─── Models ───────────────────────────────────────────────────────────────────
+
+class AuthRequest(BaseModel):
+    username: str
+    password: str
 
 
 class ChatRequest(BaseModel):
@@ -51,13 +126,41 @@ class ChatRequest(BaseModel):
     base_url: str = ""
 
 
-class SettingsPayload(BaseModel):
-    provider: str = "deepseek"
-    api_key: str = ""
-    cursor_api_key: str = ""
-    model: str = ""
-    base_url: str = ""
+# ─── Auth helpers ─────────────────────────────────────────────────────────────
 
+def _get_user_by_token(token: str) -> dict | None:
+    if not token:
+        return None
+    rows = _sb_get("hassan_sessions", {
+        "token": f"eq.{token}",
+        "expires_at": f"gt.{_now_iso()}",
+        "select": "user_id",
+        "limit": "1",
+    })
+    if not rows:
+        return None
+    user_id = rows[0]["user_id"]
+    users = _sb_get("hassan_users", {
+        "id": f"eq.{user_id}",
+        "select": "id,username,created_at",
+        "limit": "1",
+    })
+    return users[0] if users else None
+
+
+def _now_iso() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _require_auth(x_token: str | None) -> dict:
+    user = _get_user_by_token(x_token or "")
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return user
+
+
+# ─── Routes ───────────────────────────────────────────────────────────────────
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
@@ -69,8 +172,76 @@ async def intro():
     return {"intro": HASSAN_INTRO}
 
 
+@app.post("/api/auth/signup")
+async def signup(req: AuthRequest):
+    username = req.username.strip().lower()
+    if len(username) < 3:
+        raise HTTPException(400, "Username must be at least 3 characters")
+    if len(req.password) < 6:
+        raise HTTPException(400, "Password must be at least 6 characters")
+
+    existing = _sb_get("hassan_users", {"username": f"eq.{username}", "select": "id", "limit": "1"})
+    if existing:
+        raise HTTPException(409, "Username already taken")
+
+    salt = secrets.token_hex(16)
+    pw_hash = _hash_password(req.password, salt)
+
+    user = _sb_insert("hassan_users", {
+        "username": username,
+        "password_hash": pw_hash,
+        "salt": salt,
+    })
+
+    token = secrets.token_urlsafe(32)
+    _sb_insert("hassan_sessions", {"user_id": user["id"], "token": token})
+
+    return {"token": token, "username": username}
+
+
+@app.post("/api/auth/login")
+async def login(req: AuthRequest):
+    username = req.username.strip().lower()
+    rows = _sb_get("hassan_users", {
+        "username": f"eq.{username}",
+        "select": "id,username,password_hash,salt",
+        "limit": "1",
+    })
+    if not rows:
+        raise HTTPException(401, "Invalid username or password")
+
+    user = rows[0]
+    if not _verify_password(req.password, user["salt"], user["password_hash"]):
+        raise HTTPException(401, "Invalid username or password")
+
+    token = secrets.token_urlsafe(32)
+    _sb_insert("hassan_sessions", {"user_id": user["id"], "token": token})
+
+    return {"token": token, "username": user["username"]}
+
+
+@app.post("/api/auth/logout")
+async def logout(x_token: str | None = Header(default=None, alias="x-token")):
+    if x_token:
+        _sb_delete("hassan_sessions", {"token": f"eq.{x_token}"})
+    return {"ok": True}
+
+
+@app.get("/api/auth/me")
+async def me(x_token: str | None = Header(default=None, alias="x-token")):
+    user = _get_user_by_token(x_token or "")
+    if not user:
+        raise HTTPException(401, "Not authenticated")
+    return {"username": user["username"], "id": user["id"]}
+
+
 @app.post("/api/chat")
-async def chat(req: ChatRequest):
+async def chat(
+    req: ChatRequest,
+    x_token: str | None = Header(default=None, alias="x-token"),
+):
+    _require_auth(x_token)
+
     cfg = LlmConfig(
         provider=req.provider or os.getenv("BUILDER_LLM", "deepseek"),
         api_key=req.api_key or "",

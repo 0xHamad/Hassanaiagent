@@ -9,38 +9,153 @@
 </head>
 <body>
 
-<!-- ═══════════════════════════════════ LAYOUT ═══════════════════════════════════ -->
-<div class="layout">
+<!-- ═══════════════════════ SPLASH SCREEN ═══════════════════════ -->
+<div class="splash" id="splash">
+  <div class="splash-bg"></div>
+  <div class="splash-content">
+    <div class="splash-logo-wrap">
+      <div class="splash-logo-ring"></div>
+      <div class="splash-logo-ring ring2"></div>
+      <img class="splash-logo" src="/static/logo.jpg" alt="Hassan AI" />
+    </div>
+    <div class="splash-text">
+      <h1 class="splash-title">Welcome to</h1>
+      <h1 class="splash-brand">Hassan AI Agent</h1>
+      <p class="splash-sub">Signup Script Builder — Matrix Automation</p>
+    </div>
+    <div class="splash-loader">
+      <div class="splash-bar"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════ AUTH SCREEN ═══════════════════════ -->
+<div class="auth-screen" id="auth-screen" style="display:none;">
+  <div class="auth-bg">
+    <div class="auth-orb orb1"></div>
+    <div class="auth-orb orb2"></div>
+    <div class="auth-orb orb3"></div>
+  </div>
+
+  <!-- LOGIN CARD -->
+  <div class="auth-card" id="login-card">
+    <div class="auth-logo-row">
+      <img class="auth-logo" src="/static/logo.jpg" alt="Hassan AI" />
+      <div class="auth-brand-text">
+        <span class="auth-brand-name">Hassan AI</span>
+        <span class="auth-brand-tag">Script Builder</span>
+      </div>
+    </div>
+    <h2 class="auth-title">Welcome back</h2>
+    <p class="auth-sub">Sign in to your account</p>
+
+    <div class="auth-form">
+      <div class="auth-field">
+        <label>Username</label>
+        <div class="auth-input-wrap">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
+          </svg>
+          <input type="text" id="login-username" placeholder="your_username" autocomplete="username" />
+        </div>
+      </div>
+      <div class="auth-field">
+        <label>Password</label>
+        <div class="auth-input-wrap">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+          </svg>
+          <input type="password" id="login-password" placeholder="••••••••" autocomplete="current-password" />
+        </div>
+      </div>
+      <div class="auth-error" id="login-error"></div>
+      <button class="auth-btn" id="login-btn">
+        <span id="login-btn-text">Sign In</span>
+        <div class="btn-spinner" id="login-spinner" style="display:none;"></div>
+      </button>
+    </div>
+
+    <p class="auth-switch">
+      Don't have an account?
+      <button class="auth-switch-btn" id="go-signup">Create one</button>
+    </p>
+  </div>
+
+  <!-- SIGNUP CARD -->
+  <div class="auth-card" id="signup-card" style="display:none;">
+    <div class="auth-logo-row">
+      <img class="auth-logo" src="/static/logo.jpg" alt="Hassan AI" />
+      <div class="auth-brand-text">
+        <span class="auth-brand-name">Hassan AI</span>
+        <span class="auth-brand-tag">Script Builder</span>
+      </div>
+    </div>
+    <h2 class="auth-title">Create account</h2>
+    <p class="auth-sub">Join Hassan AI Agent</p>
+
+    <div class="auth-form">
+      <div class="auth-field">
+        <label>Username</label>
+        <div class="auth-input-wrap">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
+          </svg>
+          <input type="text" id="signup-username" placeholder="choose_username" autocomplete="username" />
+        </div>
+      </div>
+      <div class="auth-field">
+        <label>Password</label>
+        <div class="auth-input-wrap">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+          </svg>
+          <input type="password" id="signup-password" placeholder="min 6 characters" autocomplete="new-password" />
+        </div>
+      </div>
+      <div class="auth-field">
+        <label>Confirm Password</label>
+        <div class="auth-input-wrap">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M9 12l2 2 4-4"/><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+          </svg>
+          <input type="password" id="signup-confirm" placeholder="repeat password" autocomplete="new-password" />
+        </div>
+      </div>
+      <div class="auth-error" id="signup-error"></div>
+      <button class="auth-btn" id="signup-btn">
+        <span id="signup-btn-text">Create Account</span>
+        <div class="btn-spinner" id="signup-spinner" style="display:none;"></div>
+      </button>
+    </div>
+
+    <p class="auth-switch">
+      Already have an account?
+      <button class="auth-switch-btn" id="go-login">Sign in</button>
+    </p>
+  </div>
+</div>
+
+<!-- ═══════════════════════ DASHBOARD ═══════════════════════ -->
+<div class="layout" id="dashboard" style="display:none;">
 
   <!-- ─── LEFT SIDEBAR ─── -->
   <aside class="sidebar" id="sidebar">
     <div class="sidebar-header">
       <div class="brand">
-        <div class="brand-icon">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-            <circle cx="12" cy="12" r="3" fill="currentColor"/>
-            <circle cx="4" cy="6" r="2" fill="currentColor" opacity=".6"/>
-            <circle cx="20" cy="6" r="2" fill="currentColor" opacity=".6"/>
-            <circle cx="4" cy="18" r="2" fill="currentColor" opacity=".6"/>
-            <circle cx="20" cy="18" r="2" fill="currentColor" opacity=".6"/>
-            <line x1="12" y1="12" x2="4" y2="6" stroke="currentColor" stroke-width="1.5" opacity=".4"/>
-            <line x1="12" y1="12" x2="20" y2="6" stroke="currentColor" stroke-width="1.5" opacity=".4"/>
-            <line x1="12" y1="12" x2="4" y2="18" stroke="currentColor" stroke-width="1.5" opacity=".4"/>
-            <line x1="12" y1="12" x2="20" y2="18" stroke="currentColor" stroke-width="1.5" opacity=".4"/>
-          </svg>
+        <div class="brand-logo-wrap">
+          <img class="brand-logo-img" src="/static/logo.jpg" alt="H" />
         </div>
-        <span class="brand-name">Hassan</span>
+        <span class="brand-name">Hassan AI</span>
       </div>
       <button class="icon-btn" id="toggle-sidebar" title="Toggle sidebar">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <rect x="3" y="3" width="18" height="18" rx="2"/>
-          <line x1="9" y1="3" x2="9" y2="21"/>
+          <rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/>
         </svg>
       </button>
     </div>
 
     <div class="sidebar-search">
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
       </svg>
       <input type="text" placeholder="Search" id="search-input" />
@@ -49,26 +164,26 @@
 
     <nav class="sidebar-nav">
       <div class="nav-item active" data-view="chat">
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
         </svg>
         <span>AI Chat</span>
       </div>
       <div class="nav-item" data-view="scripts">
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
         </svg>
         <span>Scripts</span>
       </div>
       <div class="nav-item" data-view="templates">
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
           <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
         </svg>
         <span>Templates</span>
       </div>
       <div class="nav-item" data-view="recon">
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
           <line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/>
         </svg>
@@ -76,7 +191,7 @@
         <span class="badge-new">NEW</span>
       </div>
       <div class="nav-item" data-view="history">
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
         </svg>
         <span>History</span>
@@ -85,25 +200,25 @@
       <div class="nav-section-label">Settings &amp; Help</div>
 
       <div class="nav-item" id="open-settings">
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <circle cx="12" cy="12" r="3"/>
           <path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/>
         </svg>
         <span>Settings</span>
       </div>
-      <div class="nav-item">
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <circle cx="12" cy="12" r="10"/>
-          <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+      <div class="nav-item" id="logout-btn">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+          <polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
         </svg>
-        <span>Help</span>
+        <span>Sign Out</span>
       </div>
     </nav>
 
     <div class="sidebar-footer">
       <div class="theme-toggle">
         <button class="theme-btn active" id="theme-light">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="12" r="5"/>
             <line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/>
             <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
@@ -115,16 +230,16 @@
           Light
         </button>
         <button class="theme-btn" id="theme-dark">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
           </svg>
           Dark
         </button>
       </div>
       <div class="user-row">
-        <div class="user-avatar">H</div>
+        <div class="user-avatar" id="user-avatar-initials">H</div>
         <div class="user-info">
-          <div class="user-name">Hassan AI</div>
+          <div class="user-name" id="sidebar-username">Hassan</div>
           <div class="user-sub">Script Builder</div>
         </div>
         <div class="status-dot"></div>
@@ -134,50 +249,48 @@
 
   <!-- ─── MAIN AREA ─── -->
   <main class="main" id="main-area">
-
-    <!-- Top bar -->
     <header class="topbar">
-      <div class="topbar-title" id="topbar-title">AI Chat</div>
+      <div class="topbar-left">
+        <img class="topbar-logo" src="/static/logo.jpg" alt="H" />
+        <div class="topbar-title" id="topbar-title">AI Chat</div>
+      </div>
       <div class="topbar-actions">
         <button class="btn-upgrade" id="new-chat-btn">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
             <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
           </svg>
           New Chat
         </button>
-        <button class="icon-btn" title="Help">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="12" cy="12" r="10"/>
-            <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
-            <line x1="12" y1="17" x2="12.01" y2="17"/>
+        <button class="icon-btn" id="open-settings-top" title="Settings">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/>
           </svg>
         </button>
       </div>
     </header>
 
-    <!-- ─── WELCOME SCREEN ─── -->
+    <!-- WELCOME SCREEN -->
     <div class="welcome-screen" id="welcome-screen">
       <div class="welcome-inner">
+        <img class="welcome-logo" src="/static/logo.jpg" alt="Hassan AI" />
         <h1 class="welcome-heading">Welcome to Hassan AI Agent</h1>
         <p class="welcome-sub">Signup script builder — VPS automation, Matrix numbers, bulk workers.</p>
-
         <div class="quick-cards">
-          <button class="quick-card" data-prompt="Build a full SMS signup script for a new website. Include warmup, Matrix fetch, worker sharding, proxy support.">
+          <button class="quick-card" data-prompt="Build a full SMS signup script for a new website. Include warmup, Matrix fetch, worker sharding, proxy support, full code.">
             <div class="card-icon" style="background:#fef3c7;">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#d97706" stroke-width="2">
+              <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#d97706" stroke-width="2">
                 <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
                 <polyline points="14 2 14 8 20 8"/>
                 <line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>
-                <polyline points="10 9 9 9 8 9"/>
               </svg>
             </div>
             <span>Write signup script</span>
             <div class="card-plus">+</div>
           </button>
-
           <button class="quick-card" data-prompt="Explain how to set up 20 workers on a VPS for parallel signup automation. Include full bash commands.">
             <div class="card-icon" style="background:#ede9fe;">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" stroke-width="2">
+              <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" stroke-width="2">
                 <rect x="2" y="3" width="20" height="14" rx="2"/>
                 <line x1="8" y1="21" x2="16" y2="21"/>
                 <line x1="12" y1="17" x2="12" y2="21"/>
@@ -186,21 +299,18 @@
             <span>VPS setup guide</span>
             <div class="card-plus">+</div>
           </button>
-
-          <button class="quick-card" data-prompt="Give me a nano single-file VPS script I can paste directly — full code with Matrix fetch, 1x per number, proxy support.">
+          <button class="quick-card" data-prompt="Give me a nano single-file VPS script — full code with Matrix fetch, 1x per number, proxy support.">
             <div class="card-icon" style="background:#dcfce7;">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2">
-                <polyline points="16 18 22 12 16 6"/>
-                <polyline points="8 6 2 12 8 18"/>
+              <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2">
+                <polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>
               </svg>
             </div>
             <span>Nano single file</span>
             <div class="card-plus">+</div>
           </button>
-
           <button class="quick-card" data-prompt="Show me Windows beginner steps — run.bat, pip install, .env setup for a signup script.">
             <div class="card-icon" style="background:#fce7f3;">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#db2777" stroke-width="2">
+              <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#db2777" stroke-width="2">
                 <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
                 <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
               </svg>
@@ -212,22 +322,15 @@
       </div>
     </div>
 
-    <!-- ─── CHAT MESSAGES ─── -->
-    <div class="chat-messages" id="chat-messages" style="display:none;">
-      <!-- messages injected here -->
-    </div>
+    <!-- CHAT MESSAGES -->
+    <div class="chat-messages" id="chat-messages" style="display:none;"></div>
 
-    <!-- ─── INPUT BAR ─── -->
+    <!-- INPUT BAR -->
     <div class="input-bar">
       <div class="input-box">
-        <textarea
-          id="user-input"
-          placeholder="Send a message..."
-          rows="1"
-          maxlength="8000"
-        ></textarea>
+        <textarea id="user-input" placeholder="Send a message..." rows="1" maxlength="8000"></textarea>
         <button class="send-btn" id="send-btn" title="Send">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
             <line x1="22" y1="2" x2="11" y2="13"/>
             <polygon points="22 2 15 22 11 13 2 9 22 2"/>
           </svg>
@@ -235,14 +338,14 @@
       </div>
       <div class="input-meta">
         <div class="input-tools">
-          <button class="tool-btn" title="Attach file">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <button class="tool-btn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
             </svg>
             Attach
           </button>
-          <button class="tool-btn" title="Browse prompts">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <button class="tool-btn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <circle cx="12" cy="12" r="10"/>
               <line x1="12" y1="8" x2="12" y2="12"/>
               <line x1="12" y1="16" x2="12.01" y2="16"/>
@@ -260,25 +363,26 @@
   <aside class="right-panel" id="right-panel">
     <div class="right-panel-header">
       <span>Chat History</span>
-      <button class="icon-btn" id="toggle-right">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <button class="icon-btn">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>
         </svg>
       </button>
     </div>
-    <div class="history-list" id="history-list">
-      <!-- populated by JS -->
-    </div>
+    <div class="history-list" id="history-list"></div>
   </aside>
 </div>
 
-<!-- ═══════════════════════════════ SETTINGS MODAL ═══════════════════════════════ -->
+<!-- ═══════════════════════ SETTINGS MODAL ═══════════════════════ -->
 <div class="modal-overlay" id="settings-modal">
   <div class="modal">
     <div class="modal-header">
-      <h2>Settings</h2>
+      <div class="modal-header-brand">
+        <img class="modal-logo" src="/static/logo.jpg" alt="H" />
+        <h2>Settings</h2>
+      </div>
       <button class="icon-btn" id="close-settings">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
         </svg>
       </button>
@@ -309,8 +413,8 @@
         <label>Model <span class="label-hint">(leave blank for default)</span></label>
         <input type="text" id="set-model" placeholder="e.g. deepseek-chat, gpt-4o" />
       </div>
-      <div class="field-group" id="base-url-row">
-        <label>Base URL <span class="label-hint">(optional override)</span></label>
+      <div class="field-group">
+        <label>Base URL <span class="label-hint">(optional)</span></label>
         <input type="text" id="set-base-url" placeholder="https://..." />
       </div>
       <button class="btn-primary" id="save-settings">Save Settings</button>
