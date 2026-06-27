@@ -20,6 +20,7 @@ sys.path.insert(0, str(ROOT))
 
 from llm_router import LlmConfig, chat_completion  # noqa: E402
 from hassan_prompt import CHAT_SYSTEM, HASSAN_INTRO  # noqa: E402
+import llm_defaults  # noqa: E402
 import local_auth  # noqa: E402
 import local_store  # noqa: E402
 import supabase_store  # noqa: E402
@@ -346,6 +347,17 @@ async def health():
     }
 
 
+@app.get("/api/default-settings")
+async def api_default_settings():
+    provider = llm_defaults.default_provider()
+    return {
+        "provider": provider,
+        "model": llm_defaults.default_model(provider),
+        "base_url": llm_defaults.default_base_url(provider),
+        "server_key_configured": bool(llm_defaults.env_api_key(provider)),
+    }
+
+
 @app.get("/api/intro")
 async def intro():
     return {"intro": HASSAN_INTRO}
@@ -506,35 +518,39 @@ async def chat(
             local_store.rename_conversation(conv_id, user_text[:60])
         local_store.add_message(conv_id, "user", user_text)
 
+    if user_text and llm_defaults.is_simple_greeting(user_text):
+        reply = llm_defaults.greeting_reply()
+        if USE_CLOUD and conv_id:
+            supabase_store.add_message(_sb_insert, _sb_patch, conv_id, "assistant", reply)
+        elif conv_id:
+            local_store.add_message(conv_id, "assistant", reply)
+        return {"reply": reply, "conversation_id": conv_id or None}
+
+    provider = (req.provider or llm_defaults.default_provider()).strip().lower()
+    model = (req.model or llm_defaults.default_model(provider)).strip()
+    base_url = (req.base_url or llm_defaults.default_base_url(provider)).strip()
+
     cfg = LlmConfig(
-        provider=req.provider or os.getenv("BUILDER_LLM", "deepseek"),
+        provider=provider,
         api_key=req.api_key or "",
         cursor_api_key=req.cursor_api_key or "",
-        model=req.model or os.getenv("BUILDER_MODEL", ""),
-        base_url=req.base_url or "",
+        model=model,
+        base_url=base_url,
     )
     if not cfg.api_key and cfg.provider not in ("cursor", "antigravity", "ollama"):
-        env_keys = {
-            "anthropic": os.getenv("ANTHROPIC_API_KEY", ""),
-            "openai": os.getenv("OPENAI_API_KEY", ""),
-            "deepseek": os.getenv("DEEPSEEK_API_KEY", ""),
-            "openrouter": os.getenv("OPENROUTER_API_KEY", ""),
-            "gemini": os.getenv("GEMINI_API_KEY", "") or os.getenv("GOOGLE_API_KEY", ""),
-            "antigravity": os.getenv("ANTIGRAVITY_API_KEY", "") or "sk-antigravity",
-            "cursor": os.getenv("CURSOR_API_KEY", ""),
-        }
-        cfg.api_key = env_keys.get(cfg.provider, "")
+        cfg.api_key = llm_defaults.env_api_key(cfg.provider)
     if cfg.provider == "cursor" and not cfg.cursor_api_key:
         cfg.cursor_api_key = os.getenv("CURSOR_API_KEY", "") or cfg.api_key
     if cfg.provider == "antigravity" and not cfg.api_key:
         cfg.api_key = os.getenv("ANTIGRAVITY_API_KEY", "") or "sk-antigravity"
     if not cfg.base_url:
-        urls = {
-            "ollama": os.getenv("OLLAMA_BASE_URL", ""),
-            "antigravity": os.getenv("ANTIGRAVITY_BASE_URL", ""),
-            "gemini": os.getenv("GEMINI_BASE_URL", ""),
-        }
-        cfg.base_url = urls.get(cfg.provider, "")
+        cfg.base_url = llm_defaults.default_base_url(cfg.provider)
+
+    if not cfg.api_key and cfg.provider == "gemini":
+        raise HTTPException(
+            400,
+            "Gemini API key missing. Add GEMINI_API_KEY in server .env or paste your free key in Settings → API Key (aistudio.google.com/apikey).",
+        )
 
     try:
         reply = chat_completion(req.messages, cfg, system=CHAT_SYSTEM)
@@ -552,8 +568,8 @@ async def chat(
 @app.get("/api/env-config")
 async def env_config():
     return {
-        "provider": os.getenv("BUILDER_LLM", "deepseek"),
-        "model": os.getenv("BUILDER_MODEL", ""),
+        "provider": llm_defaults.default_provider(),
+        "model": llm_defaults.default_model(),
         "has_anthropic": bool(os.getenv("ANTHROPIC_API_KEY")),
         "has_openai": bool(os.getenv("OPENAI_API_KEY")),
         "has_deepseek": bool(os.getenv("DEEPSEEK_API_KEY")),
