@@ -10,6 +10,12 @@ let currentUser = null;
 let authToken   = localStorage.getItem('hassan_token') || '';
 let settings    = loadSettings();
 
+const FALLBACK_DEFAULTS = {
+  provider: 'gemini',
+  model: 'gemini-2.5-flash',
+  base_url: 'https://generativelanguage.googleapis.com/v1beta/openai/',
+};
+
 // ─── DOM refs ──────────────────────────────────────────────────────────────────
 const splash        = document.getElementById('splash');
 const authScreen    = document.getElementById('auth-screen');
@@ -27,6 +33,7 @@ const topbarTitle   = document.getElementById('topbar-title');
 // ─── Boot ──────────────────────────────────────────────────────────────────────
 (async function boot() {
   applySavedSettings();
+  await applyUserDefaults(false);
 
   // Show splash for 2.8s then route
   setTimeout(async () => {
@@ -124,6 +131,7 @@ async function doLogin() {
     authToken = data.token;
     currentUser = { username: data.username };
     localStorage.setItem('hassan_token', authToken);
+    await applyUserDefaults(false);
     showDashboard();
   } catch (e) {
     errEl.textContent = e.message === 'Failed to fetch'
@@ -165,6 +173,7 @@ async function doSignup() {
     authToken = data.token;
     currentUser = { username: data.username };
     localStorage.setItem('hassan_token', authToken);
+    await applyUserDefaults(false);
     showDashboard();
   } catch (e) {
     errEl.textContent = e.message === 'Failed to fetch'
@@ -497,6 +506,26 @@ function bindDashboardEvents() {
 }
 
 // ─── Settings ──────────────────────────────────────────────────────────────────
+async function applyUserDefaults(force) {
+  let defs = { ...FALLBACK_DEFAULTS };
+  try {
+    const r = await fetch('/api/default-settings');
+    if (r.ok) {
+      const d = await r.json();
+      defs = {
+        provider: d.provider || FALLBACK_DEFAULTS.provider,
+        model: d.model || FALLBACK_DEFAULTS.model,
+        base_url: d.base_url || FALLBACK_DEFAULTS.base_url,
+      };
+    }
+  } catch {}
+  const cur = loadSettings();
+  if (force || !cur.provider) {
+    saveSettings({ ...defs, api_key: cur.api_key || '', cursor_api_key: cur.cursor_api_key || '' });
+    settings = loadSettings();
+  }
+}
+
 function loadSettings() {
   try { return JSON.parse(localStorage.getItem('hassan_settings') || '{}'); }
   catch { return {}; }
@@ -506,14 +535,22 @@ function saveSettings(obj) {
   localStorage.setItem('hassan_settings', JSON.stringify(settings));
 }
 function applySavedSettings() {
+  ensureDefaultSettings();
   const g = id => document.getElementById(id);
-  if (settings.provider && g('set-provider')) g('set-provider').value = settings.provider;
-  if (settings.api_key   && g('set-api-key'))  g('set-api-key').value  = settings.api_key;
+  if (g('set-provider')) g('set-provider').value = settings.provider || FALLBACK_DEFAULTS.provider;
+  if (settings.api_key && g('set-api-key')) g('set-api-key').value = settings.api_key;
   if (settings.cursor_api_key && g('set-cursor-key')) g('set-cursor-key').value = settings.cursor_api_key;
-  if (settings.model     && g('set-model'))    g('set-model').value    = settings.model;
-  if (settings.base_url  && g('set-base-url')) g('set-base-url').value = settings.base_url;
+  if (g('set-model')) g('set-model').value = settings.model || FALLBACK_DEFAULTS.model;
+  if (g('set-base-url')) g('set-base-url').value = settings.base_url || FALLBACK_DEFAULTS.base_url;
   if (settings.theme) applyTheme(settings.theme);
   toggleCursorRow();
+}
+
+function ensureDefaultSettings() {
+  if (!settings.provider) {
+    saveSettings({ ...FALLBACK_DEFAULTS, ...settings });
+    settings = loadSettings();
+  }
 }
 function openSettings() { settingsModal.classList.add('open'); settingsStatus.textContent = ''; settingsStatus.className = 'settings-note'; }
 function closeSettings() { settingsModal.classList.remove('open'); }

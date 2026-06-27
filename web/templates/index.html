@@ -21,7 +21,7 @@
     <div class="splash-text">
       <h1 class="splash-title">Welcome to</h1>
       <h1 class="splash-brand">Hassan AI Agent</h1>
-      <p class="splash-sub">Signup Script Builder — Matrix Automation</p>
+      <p class="splash-sub">Professional Signup Script Builder</p>
     </div>
     <div class="splash-loader">
       <div class="splash-bar"></div>
@@ -275,9 +275,9 @@
       <div class="welcome-inner">
         <img class="welcome-logo" src="/static/logo.jpg" alt="Hassan AI" />
         <h1 class="welcome-heading">Welcome to Hassan AI Agent</h1>
-        <p class="welcome-sub">Signup script builder — VPS automation, Matrix numbers, bulk workers.</p>
+        <p class="welcome-sub">Build complete Python signup scripts, API automation, and VPS guides — powered by Gemini Free.</p>
         <div class="quick-cards">
-          <button class="quick-card" data-prompt="Build a full SMS signup script for a new website. Include warmup, Matrix fetch, worker sharding, proxy support, full code.">
+          <button class="quick-card" data-prompt="Build a full SMS/signup Python script for a website. Include real API requests, numbers.txt bulk mode, progress tracking, proxy support, and complete code.">
             <div class="card-icon" style="background:#fef3c7;">
               <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#d97706" stroke-width="2">
                 <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
@@ -285,10 +285,10 @@
                 <line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>
               </svg>
             </div>
-            <span>Write signup script</span>
+            <span>Build signup script</span>
             <div class="card-plus">+</div>
           </button>
-          <button class="quick-card" data-prompt="Explain how to set up 20 workers on a VPS for parallel signup automation. Include full bash commands.">
+          <button class="quick-card" data-prompt="Give me a complete VPS deployment guide for running a Python signup script on Ubuntu — SSH, nano, pip, and optional workers.">
             <div class="card-icon" style="background:#ede9fe;">
               <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" stroke-width="2">
                 <rect x="2" y="3" width="20" height="14" rx="2"/>
@@ -296,26 +296,26 @@
                 <line x1="12" y1="17" x2="12" y2="21"/>
               </svg>
             </div>
-            <span>VPS setup guide</span>
+            <span>Deploy on VPS</span>
             <div class="card-plus">+</div>
           </button>
-          <button class="quick-card" data-prompt="Give me a nano single-file VPS script — full code with Matrix fetch, 1x per number, proxy support.">
+          <button class="quick-card" data-prompt="Create one single-file Python script for VPS paste — reads numbers.txt, one signup per phone, full requests code, no shortcuts.">
             <div class="card-icon" style="background:#dcfce7;">
               <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2">
                 <polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>
               </svg>
             </div>
-            <span>Nano single file</span>
+            <span>Single-file script</span>
             <div class="card-plus">+</div>
           </button>
-          <button class="quick-card" data-prompt="Show me Windows beginner steps — run.bat, pip install, .env setup for a signup script.">
+          <button class="quick-card" data-prompt="Windows beginner guide: pip install, run.bat, numbers.txt setup, and how to run the signup script locally.">
             <div class="card-icon" style="background:#fce7f3;">
               <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#db2777" stroke-width="2">
                 <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
                 <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
               </svg>
             </div>
-            <span>Windows setup</span>
+            <span>Windows guide</span>
             <div class="card-plus">+</div>
           </button>
         </div>
@@ -391,19 +391,19 @@
       <div class="field-group">
         <label>LLM Provider</label>
         <select id="set-provider">
+          <option value="gemini">Gemini Free (Google) — Recommended</option>
           <option value="deepseek">DeepSeek</option>
           <option value="anthropic">Anthropic (Claude)</option>
           <option value="openai">OpenAI</option>
           <option value="openrouter">OpenRouter</option>
-          <option value="gemini">Gemini (Google)</option>
           <option value="antigravity">Antigravity (Local)</option>
           <option value="ollama">Ollama (Local)</option>
           <option value="cursor">Cursor</option>
         </select>
       </div>
       <div class="field-group">
-        <label>API Key</label>
-        <input type="password" id="set-api-key" placeholder="sk-..." />
+        <label>API Key <span class="label-hint">(Gemini: AIza… from aistudio.google.com/apikey — optional if server key set)</span></label>
+        <input type="password" id="set-api-key" placeholder="AIza… or leave blank if server has key" />
       </div>
       <div class="field-group" id="cursor-key-row" style="display:none;">
         <label>Cursor API Key</label>
@@ -411,11 +411,11 @@
       </div>
       <div class="field-group">
         <label>Model <span class="label-hint">(leave blank for default)</span></label>
-        <input type="text" id="set-model" placeholder="e.g. deepseek-chat, gpt-4o" />
+        <input type="text" id="set-model" placeholder="gemini-2.5-flash" />
       </div>
       <div class="field-group">
-        <label>Base URL <span class="label-hint">(optional)</span></label>
-        <input type="text" id="set-base-url" placeholder="https://..." />
+        <label>Base URL <span class="label-hint">(Gemini default auto)</span></label>
+        <input type="text" id="set-base-url" placeholder="https://generativelanguage.googleapis.com/v1beta/openai/" />
       </div>
       <button class="btn-primary" id="save-settings">Save Settings</button>
       <p class="settings-note" id="settings-status"></p>
