@@ -29,6 +29,10 @@ const historyList   = document.getElementById('history-list');
 const settingsModal = document.getElementById('settings-modal');
 const settingsStatus= document.getElementById('settings-status');
 const topbarTitle   = document.getElementById('topbar-title');
+const sidebar       = document.getElementById('sidebar');
+const rightPanel    = document.getElementById('right-panel');
+const layoutEl      = document.getElementById('dashboard');
+const mobileBackdrop = document.getElementById('mobile-backdrop');
 
 // ─── Boot ──────────────────────────────────────────────────────────────────────
 function clearSplashFallback() {
@@ -299,6 +303,7 @@ async function openSession(id) {
   renderHistory();
   renderAllMessages();
   messages.length > 0 ? showChat() : showWelcomeView();
+  closeMobilePanels();
 }
 function updateSessionTitle(sess, firstMsg) {
   sess.title = firstMsg.length > 50 ? firstMsg.slice(0, 47) + '...' : firstMsg;
@@ -474,6 +479,73 @@ function updateSendBtn() {
   sendBtn.classList.toggle('active', userInput.value.trim().length > 0);
 }
 
+// ─── Mobile / panel toggles ────────────────────────────────────────────────────
+function isMobileSidebar() {
+  return window.matchMedia('(max-width: 768px)').matches;
+}
+
+function isMobileHistory() {
+  return window.matchMedia('(max-width: 1024px)').matches;
+}
+
+function updateMobileBackdrop() {
+  const open = sidebar?.classList.contains('open') || rightPanel?.classList.contains('open');
+  mobileBackdrop?.classList.toggle('show', !!open);
+  document.body.classList.toggle('drawer-open', !!open);
+}
+
+function openSidebar() {
+  if (!isMobileSidebar()) return;
+  rightPanel?.classList.remove('open');
+  sidebar?.classList.add('open');
+  updateMobileBackdrop();
+}
+
+function closeSidebar() {
+  sidebar?.classList.remove('open');
+  updateMobileBackdrop();
+}
+
+function toggleSidebar() {
+  if (isMobileSidebar()) {
+    if (sidebar?.classList.contains('open')) closeSidebar();
+    else openSidebar();
+    return;
+  }
+  layoutEl?.classList.toggle('sidebar-collapsed');
+}
+
+function openHistoryPanel() {
+  if (isMobileHistory()) {
+    sidebar?.classList.remove('open');
+    rightPanel?.classList.add('open');
+    updateMobileBackdrop();
+    return;
+  }
+  layoutEl?.classList.remove('history-collapsed');
+}
+
+function closeHistoryPanel() {
+  rightPanel?.classList.remove('open');
+  if (!isMobileHistory()) layoutEl?.classList.add('history-collapsed');
+  updateMobileBackdrop();
+}
+
+function toggleHistoryPanel() {
+  if (isMobileHistory()) {
+    if (rightPanel?.classList.contains('open')) closeHistoryPanel();
+    else openHistoryPanel();
+    return;
+  }
+  layoutEl?.classList.toggle('history-collapsed');
+}
+
+function closeMobilePanels() {
+  sidebar?.classList.remove('open');
+  rightPanel?.classList.remove('open');
+  updateMobileBackdrop();
+}
+
 // ─── Logout ────────────────────────────────────────────────────────────────────
 async function doLogout() {
   try { await fetch('/api/auth/logout', { method: 'POST', headers: { 'x-token': authToken } }); } catch {}
@@ -507,9 +579,19 @@ function bindDashboardEvents() {
 
   document.getElementById('new-chat-btn').addEventListener('click', async () => {
     await newSession(); showWelcomeView(); renderHistory(); userInput.focus();
+    closeMobilePanels();
   });
 
-  document.getElementById('open-settings')?.addEventListener('click', openSettings);
+  document.getElementById('toggle-sidebar')?.addEventListener('click', toggleSidebar);
+  document.getElementById('mobile-menu-btn')?.addEventListener('click', openSidebar);
+  document.getElementById('mobile-history-btn')?.addEventListener('click', openHistoryPanel);
+  document.getElementById('close-history-panel')?.addEventListener('click', closeHistoryPanel);
+  mobileBackdrop?.addEventListener('click', closeMobilePanels);
+
+  document.getElementById('open-settings')?.addEventListener('click', () => {
+    closeMobilePanels();
+    openSettings();
+  });
   document.getElementById('open-settings-top')?.addEventListener('click', openSettings);
   document.getElementById('close-settings').addEventListener('click', closeSettings);
   settingsModal.addEventListener('click', e => { if (e.target === settingsModal) closeSettings(); });
@@ -523,14 +605,36 @@ function bindDashboardEvents() {
 
   document.addEventListener('keydown', e => {
     if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); document.getElementById('search-input')?.focus(); }
-    if (e.key === 'Escape') closeSettings();
+    if (e.key === 'Escape') {
+      if (sidebar?.classList.contains('open') || rightPanel?.classList.contains('open')) {
+        closeMobilePanels();
+      } else {
+        closeSettings();
+      }
+    }
+  });
+
+  window.addEventListener('resize', () => {
+    if (!isMobileSidebar()) sidebar?.classList.remove('open');
+    if (!isMobileHistory()) rightPanel?.classList.remove('open');
+    updateMobileBackdrop();
   });
 
   document.querySelectorAll('.nav-item[data-view]').forEach(item => {
     item.addEventListener('click', () => {
       document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
       item.classList.add('active');
+      const view = item.dataset.view;
       if (topbarTitle) topbarTitle.textContent = item.querySelector('span').textContent.trim();
+      if (view === 'history') {
+        openHistoryPanel();
+        closeSidebar();
+      } else if (view === 'chat') {
+        showWelcomeView();
+        closeMobilePanels();
+      } else {
+        closeMobilePanels();
+      }
     });
   });
 }
