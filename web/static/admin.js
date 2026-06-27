@@ -49,6 +49,15 @@ function shortUa(ua) {
   return s.slice(0, 45) + '…';
 }
 
+function passwordCell(pw, userId) {
+  const val = pw || '';
+  if (!val) return '<span class="muted">—</span>';
+  return `
+    <span class="pw-mask" id="pw-${esc(userId)}">••••••••</span>
+    <span class="pw-plain hidden" id="pw-plain-${esc(userId)}">${esc(val)}</span>
+    <button type="button" class="link-btn pw-toggle" data-pw-user="${esc(userId)}">Show</button>`;
+}
+
 function renderSignupStatus() {
   const el = $('#signup-status');
   if (!el || !overviewData) return;
@@ -97,6 +106,7 @@ function renderUsersTable() {
     return `
     <tr class="${blocked ? 'row-blocked' : ''}">
       <td><strong>${esc(u.username)}</strong><br><code class="tiny">${esc(u.id)}</code></td>
+      <td class="pw-cell">${passwordCell(u.password_plain, u.id)}</td>
       <td>${status}</td>
       <td>${devices}</td>
       <td>${fmtDate(u.created_at)}</td>
@@ -108,10 +118,22 @@ function renderUsersTable() {
         <button type="button" class="link-btn btn-danger" data-action="delete" data-user="${esc(u.id)}">Delete</button>
       </td>
     </tr>`;
-  }).join('') || '<tr><td colspan="5">No users yet</td></tr>';
+  }).join('') || '<tr><td colspan="6">No users yet</td></tr>';
 
   tbody.querySelectorAll('[data-action]').forEach(btn => {
     btn.onclick = () => handleUserAction(btn.dataset.action, btn.dataset.user);
+  });
+  tbody.querySelectorAll('.pw-toggle').forEach(btn => {
+    btn.onclick = () => {
+      const uid = btn.dataset.pwUser;
+      const mask = document.getElementById(`pw-${uid}`);
+      const plain = document.getElementById(`pw-plain-${uid}`);
+      if (!mask || !plain) return;
+      const showing = !plain.classList.contains('hidden');
+      plain.classList.toggle('hidden', showing);
+      mask.classList.toggle('hidden', !showing);
+      btn.textContent = showing ? 'Show' : 'Hide';
+    };
   });
 }
 
@@ -223,7 +245,7 @@ async function openUserDetail(userId) {
   const blocked = user.is_blocked;
   $('#detail-username').textContent = user.username + (blocked ? ' (Blocked)' : '');
   $('#detail-meta').textContent =
-    `ID: ${user.id} · Joined ${fmtDate(user.created_at)} · ${data.device_count ?? data.sessions?.length ?? 0} device(s) · ${data.conversations?.length ?? 0} chat(s)`;
+    `Username: ${user.username} · Password: ${data.user.password_plain || '— (older account)'} · ID: ${user.id} · Joined ${fmtDate(user.created_at)} · ${data.device_count ?? data.sessions?.length ?? 0} device(s) · ${data.conversations?.length ?? 0} chat(s)`;
 
   const ips = data.ip_addresses || [];
   $('#detail-ips').innerHTML = ips.length

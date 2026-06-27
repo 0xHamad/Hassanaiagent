@@ -400,10 +400,16 @@
           <option value="ollama">Ollama (Local)</option>
           <option value="cursor">Cursor</option>
         </select>
+        <div id="gemini-guide" class="gemini-guide">
+          <strong>Free Gemini API key</strong><br />
+          1. Open <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">aistudio.google.com/apikey</a><br />
+          2. Click <em>Create API key</em> (Google account — free tier)<br />
+          3. Copy key (starts with <code>AIza…</code>) and paste below
+        </div>
       </div>
       <div class="field-group">
-        <label>API Key <span class="label-hint">(Gemini: AIza… from aistudio.google.com/apikey — optional if server key set)</span></label>
-        <input type="password" id="set-api-key" placeholder="AIza… or leave blank if server has key" />
+        <label>API Key <span class="label-hint">(your own key — saved only for your account)</span></label>
+        <input type="password" id="set-api-key" placeholder="AIza… (Gemini) or provider key" />
       </div>
       <div class="field-group" id="cursor-key-row" style="display:none;">
         <label>Cursor API Key</label>
@@ -423,6 +429,6 @@
   </div>
 </div>
 
-<script src="/static/app.js"></script>
+<script src="/static/app.js?v=3"></script>
 </body>
 </html>

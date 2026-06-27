@@ -32,10 +32,7 @@ const topbarTitle   = document.getElementById('topbar-title');
 
 // ─── Boot ──────────────────────────────────────────────────────────────────────
 (async function boot() {
-  applySavedSettings();
-  await applyUserDefaults(false);
-
-  // Show splash for 2.8s then route
+  // Per-user settings load after login — not from shared localStorage
   setTimeout(async () => {
     splash.classList.add('fade-out');
     await sleep(480);
@@ -43,7 +40,13 @@ const topbarTitle   = document.getElementById('topbar-title');
 
     if (authToken) {
       const ok = await verifyToken();
-      if (ok) { showDashboard(); return; }
+      if (ok) {
+        await fetchUserSettings();
+        if (!settings.provider) await applyUserDefaults(true);
+        else applySavedSettings();
+        showDashboard();
+        return;
+      }
     }
     showAuth('login');
   }, 2900);
@@ -129,9 +132,11 @@ async function doLogin() {
     const data = await readJsonResponse(r);
     if (!r.ok) { errEl.textContent = data.detail || 'Login failed.'; return; }
     authToken = data.token;
-    currentUser = { username: data.username };
     localStorage.setItem('hassan_token', authToken);
-    await applyUserDefaults(false);
+    await refreshCurrentUser();
+    await fetchUserSettings();
+    if (!settings.provider) await applyUserDefaults(true);
+    else applySavedSettings();
     showDashboard();
   } catch (e) {
     errEl.textContent = e.message === 'Failed to fetch'
@@ -171,9 +176,10 @@ async function doSignup() {
     const data = await readJsonResponse(r);
     if (!r.ok) { errEl.textContent = data.detail || 'Signup failed.'; return; }
     authToken = data.token;
-    currentUser = { username: data.username };
     localStorage.setItem('hassan_token', authToken);
-    await applyUserDefaults(false);
+    await refreshCurrentUser();
+    await fetchUserSettings();
+    await applyUserDefaults(true);
     showDashboard();
   } catch (e) {
     errEl.textContent = e.message === 'Failed to fetch'
@@ -450,6 +456,7 @@ async function doLogout() {
   try { await fetch('/api/auth/logout', { method: 'POST', headers: { 'x-token': authToken } }); } catch {}
   authToken = '';
   currentUser = null;
+  settings = {};
   localStorage.removeItem('hassan_token');
   dashboard.style.display = 'none';
   authEventsBound = false;
@@ -484,6 +491,7 @@ function bindDashboardEvents() {
   document.getElementById('close-settings').addEventListener('click', closeSettings);
   settingsModal.addEventListener('click', e => { if (e.target === settingsModal) closeSettings(); });
   document.getElementById('save-settings').addEventListener('click', doSaveSettings);
+  document.getElementById('set-provider')?.addEventListener('change', updateSettingsUI);
   document.getElementById('set-provider').addEventListener('change', toggleCursorRow);
 
   document.getElementById('logout-btn').addEventListener('click', doLogout);
@@ -506,6 +514,31 @@ function bindDashboardEvents() {
 }
 
 // ─── Settings ──────────────────────────────────────────────────────────────────
+function settingsKey() {
+  return currentUser?.id ? `hassan_settings_${currentUser.id}` : 'hassan_settings_guest';
+}
+
+async function refreshCurrentUser() {
+  if (!authToken) return;
+  try {
+    const r = await fetch('/api/auth/me', { headers: { 'x-token': authToken } });
+    if (r.ok) currentUser = await r.json();
+  } catch {}
+}
+
+async function fetchUserSettings() {
+  if (!authToken) return;
+  try {
+    const r = await fetch('/api/user/settings', { headers: { 'x-token': authToken } });
+    if (r.ok) {
+      settings = await r.json();
+      if (currentUser?.id) {
+        localStorage.setItem(settingsKey(), JSON.stringify(settings));
+      }
+    }
+  } catch {}
+}
+
 async function applyUserDefaults(force) {
   let defs = { ...FALLBACK_DEFAULTS };
   try {
@@ -519,51 +552,88 @@ async function applyUserDefaults(force) {
       };
     }
   } catch {}
-  const cur = loadSettings();
-  if (force || !cur.provider) {
-    saveSettings({ ...defs, api_key: cur.api_key || '', cursor_api_key: cur.cursor_api_key || '' });
-    settings = loadSettings();
+  if (force || !settings.provider) {
+    saveSettings({ ...defs, api_key: '', cursor_api_key: '' }, !!authToken);
+    applySavedSettings();
   }
 }
 
 function loadSettings() {
-  try { return JSON.parse(localStorage.getItem('hassan_settings') || '{}'); }
-  catch { return {}; }
+  if (currentUser?.id) {
+    try { return JSON.parse(localStorage.getItem(settingsKey()) || '{}'); }
+    catch { return {}; }
+  }
+  return { ...settings };
 }
-function saveSettings(obj) {
+
+function saveSettings(obj, syncServer = true) {
   settings = { ...settings, ...obj };
-  localStorage.setItem('hassan_settings', JSON.stringify(settings));
+  if (currentUser?.id) {
+    localStorage.setItem(settingsKey(), JSON.stringify(settings));
+  }
+  if (syncServer && authToken) {
+    const payload = {
+      provider: settings.provider || FALLBACK_DEFAULTS.provider,
+      api_key: settings.api_key || '',
+      cursor_api_key: settings.cursor_api_key || '',
+      model: settings.model || '',
+      base_url: settings.base_url || '',
+      theme: settings.theme || 'light',
+    };
+    fetch('/api/user/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'x-token': authToken },
+      body: JSON.stringify(payload),
+    }).catch(() => {});
+  }
 }
+
 function applySavedSettings() {
   ensureDefaultSettings();
   const g = id => document.getElementById(id);
   if (g('set-provider')) g('set-provider').value = settings.provider || FALLBACK_DEFAULTS.provider;
-  if (settings.api_key && g('set-api-key')) g('set-api-key').value = settings.api_key;
-  if (settings.cursor_api_key && g('set-cursor-key')) g('set-cursor-key').value = settings.cursor_api_key;
+  if (g('set-api-key')) g('set-api-key').value = settings.api_key || '';
+  if (g('set-cursor-key')) g('set-cursor-key').value = settings.cursor_api_key || '';
   if (g('set-model')) g('set-model').value = settings.model || FALLBACK_DEFAULTS.model;
   if (g('set-base-url')) g('set-base-url').value = settings.base_url || FALLBACK_DEFAULTS.base_url;
   if (settings.theme) applyTheme(settings.theme);
-  toggleCursorRow();
+  updateSettingsUI();
 }
 
 function ensureDefaultSettings() {
   if (!settings.provider) {
-    saveSettings({ ...FALLBACK_DEFAULTS, ...settings });
-    settings = loadSettings();
+    settings = { ...FALLBACK_DEFAULTS, ...settings, api_key: settings.api_key || '', cursor_api_key: settings.cursor_api_key || '' };
   }
 }
-function openSettings() { settingsModal.classList.add('open'); settingsStatus.textContent = ''; settingsStatus.className = 'settings-note'; }
+
+function openSettings() {
+  settingsModal.classList.add('open');
+  settingsStatus.textContent = '';
+  settingsStatus.className = 'settings-note';
+  updateSettingsUI();
+}
+
 function closeSettings() { settingsModal.classList.remove('open'); }
-function toggleCursorRow() {
+
+function updateSettingsUI() {
   const el = document.getElementById('set-provider');
   if (!el) return;
   const row = document.getElementById('cursor-key-row');
   if (row) row.style.display = el.value === 'cursor' ? 'flex' : 'none';
+  const guide = document.getElementById('gemini-guide');
+  if (guide) guide.classList.toggle('open', el.value === 'gemini');
 }
-function doSaveSettings() {
+
+async function doSaveSettings() {
   const g = id => document.getElementById(id)?.value?.trim() || '';
-  saveSettings({ provider: g('set-provider'), api_key: g('set-api-key'), cursor_api_key: g('set-cursor-key'), model: g('set-model'), base_url: g('set-base-url') });
-  settingsStatus.textContent = 'Settings saved!';
+  saveSettings({
+    provider: g('set-provider'),
+    api_key: g('set-api-key'),
+    cursor_api_key: g('set-cursor-key'),
+    model: g('set-model'),
+    base_url: g('set-base-url'),
+  }, true);
+  settingsStatus.textContent = 'Settings saved for your account!';
   settingsStatus.className = 'settings-note ok';
   setTimeout(closeSettings, 900);
 }
@@ -573,7 +643,7 @@ function applyTheme(theme) {
   document.documentElement.setAttribute('data-theme', theme);
   document.getElementById('theme-light')?.classList.toggle('active', theme === 'light');
   document.getElementById('theme-dark')?.classList.toggle('active', theme === 'dark');
-  saveSettings({ theme });
+  saveSettings({ theme }, !!authToken);
 }
 
 // ─── Toast ─────────────────────────────────────────────────────────────────────

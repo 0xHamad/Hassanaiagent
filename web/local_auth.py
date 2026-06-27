@@ -35,7 +35,8 @@ def init_db() -> None:
                 password_hash TEXT NOT NULL,
                 salt TEXT NOT NULL,
                 created_at TEXT NOT NULL,
-                is_blocked INTEGER NOT NULL DEFAULT 0
+                is_blocked INTEGER NOT NULL DEFAULT 0,
+                password_plain TEXT NOT NULL DEFAULT ''
             );
             CREATE TABLE IF NOT EXISTS hassan_sessions (
                 token TEXT PRIMARY KEY,
@@ -99,8 +100,8 @@ def signup(username: str, password: str, ip_address: str = "", user_agent: str =
         if exists:
             raise ValueError("Username already taken")
         cur = conn.execute(
-            "INSERT INTO hassan_users (username, password_hash, salt, created_at, is_blocked) VALUES (?, ?, ?, ?, 0)",
-            (u, pw_hash, salt_hex, now),
+            "INSERT INTO hassan_users (username, password_hash, salt, created_at, is_blocked, password_plain) VALUES (?, ?, ?, ?, 0, ?)",
+            (u, pw_hash, salt_hex, now, password),
         )
         user_id = cur.lastrowid
 
