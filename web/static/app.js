@@ -8,7 +8,7 @@ let activeSession = null;
 let isLoading  = false;
 let currentUser = null;
 let authToken   = localStorage.getItem('hassan_token') || '';
-let settings    = loadSettings();
+let settings    = {};
 
 const FALLBACK_DEFAULTS = {
   provider: 'gemini',
@@ -34,21 +34,27 @@ const topbarTitle   = document.getElementById('topbar-title');
 (async function boot() {
   // Per-user settings load after login — not from shared localStorage
   setTimeout(async () => {
-    splash.classList.add('fade-out');
-    await sleep(480);
-    splash.style.display = 'none';
+    try {
+      splash?.classList.add('fade-out');
+      await sleep(480);
+      if (splash) splash.style.display = 'none';
 
-    if (authToken) {
-      const ok = await verifyToken();
-      if (ok) {
-        await fetchUserSettings();
-        if (!settings.provider) await applyUserDefaults(true);
-        else applySavedSettings();
-        showDashboard();
-        return;
+      if (authToken) {
+        const ok = await verifyToken();
+        if (ok) {
+          await fetchUserSettings();
+          if (!settings.provider) await applyUserDefaults(true);
+          else applySavedSettings();
+          showDashboard();
+          return;
+        }
       }
+      showAuth('login');
+    } catch (e) {
+      console.error('Boot error:', e);
+      if (splash) splash.style.display = 'none';
+      showAuth('login');
     }
-    showAuth('login');
   }, 2900);
 })();
 
@@ -563,7 +569,7 @@ function loadSettings() {
     try { return JSON.parse(localStorage.getItem(settingsKey()) || '{}'); }
     catch { return {}; }
   }
-  return { ...settings };
+  return {};
 }
 
 function saveSettings(obj, syncServer = true) {
