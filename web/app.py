@@ -11,7 +11,7 @@ from pathlib import Path
 import requests as http_requests
 from fastapi import FastAPI, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -72,6 +72,13 @@ app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
 
 _INDEX_HTML = (HERE / "templates" / "index.html").read_text(encoding="utf-8")
 _ADMIN_HTML = (HERE / "templates" / "admin.html").read_text(encoding="utf-8")
+_NO_CACHE = {"Cache-Control": "no-store, no-cache, must-revalidate"}
+
+
+def _render_index_html() -> str:
+    html = (HERE / "templates" / "index.html").read_text(encoding="utf-8")
+    js_ver = int((HERE / "static" / "app.js").stat().st_mtime)
+    return html.replace("__APP_JS_VER__", str(js_ver))
 
 
 # ─── Supabase helpers ─────────────────────────────────────────────────────────
@@ -401,9 +408,17 @@ async def admin_page():
     return HTMLResponse(_ADMIN_HTML)
 
 
+@app.get("/favicon.ico")
+async def favicon():
+    logo = HERE / "static" / "logo.jpg"
+    if logo.is_file():
+        return FileResponse(logo, media_type="image/jpeg")
+    raise HTTPException(404)
+
+
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    return HTMLResponse(_INDEX_HTML)
+    return HTMLResponse(_render_index_html(), headers=_NO_CACHE)
 
 
 @app.get("/api/health")

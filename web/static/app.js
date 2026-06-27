@@ -8,7 +8,7 @@ let activeSession = null;
 let isLoading  = false;
 let currentUser = null;
 let authToken   = localStorage.getItem('hassan_token') || '';
-let settings    = loadSettings();
+let settings    = {};
 
 const FALLBACK_DEFAULTS = {
   provider: 'gemini',
@@ -31,12 +31,19 @@ const settingsStatus= document.getElementById('settings-status');
 const topbarTitle   = document.getElementById('topbar-title');
 
 // ─── Boot ──────────────────────────────────────────────────────────────────────
-(async function boot() {
-  // Per-user settings load after login — not from shared localStorage
-  setTimeout(async () => {
-    splash.classList.add('fade-out');
-    await sleep(480);
-    splash.style.display = 'none';
+function clearSplashFallback() {
+  if (window.__hideSplashFallback) {
+    clearTimeout(window.__hideSplashFallback);
+    window.__hideSplashFallback = null;
+  }
+}
+
+async function finishBoot() {
+  try {
+    if (splash) splash.classList.add('fade-out');
+    await sleep(400);
+    if (splash) splash.style.display = 'none';
+    clearSplashFallback();
 
     if (authToken) {
       const ok = await verifyToken();
@@ -49,15 +56,31 @@ const topbarTitle   = document.getElementById('topbar-title');
       }
     }
     showAuth('login');
-  }, 2900);
-})();
+  } catch (e) {
+    console.error('Boot error:', e);
+    if (splash) splash.style.display = 'none';
+    clearSplashFallback();
+    showAuth('login');
+  }
+}
+
+function startBoot() {
+  setTimeout(finishBoot, 1200);
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', startBoot);
+} else {
+  startBoot();
+}
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 // ─── Auth routing ──────────────────────────────────────────────────────────────
 function showAuth(mode) {
+  if (!authScreen) return;
   authScreen.style.display = 'flex';
-  dashboard.style.display  = 'none';
+  if (dashboard) dashboard.style.display = 'none';
   showAuthMode(mode);
   bindAuthEvents();
 }
@@ -492,12 +515,11 @@ function bindDashboardEvents() {
   settingsModal.addEventListener('click', e => { if (e.target === settingsModal) closeSettings(); });
   document.getElementById('save-settings').addEventListener('click', doSaveSettings);
   document.getElementById('set-provider')?.addEventListener('change', updateSettingsUI);
-  document.getElementById('set-provider').addEventListener('change', toggleCursorRow);
 
-  document.getElementById('logout-btn').addEventListener('click', doLogout);
+  document.getElementById('logout-btn')?.addEventListener('click', doLogout);
 
-  document.getElementById('theme-light').addEventListener('click', () => applyTheme('light'));
-  document.getElementById('theme-dark').addEventListener('click', () => applyTheme('dark'));
+  document.getElementById('theme-light')?.addEventListener('click', () => applyTheme('light'));
+  document.getElementById('theme-dark')?.addEventListener('click', () => applyTheme('dark'));
 
   document.addEventListener('keydown', e => {
     if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); document.getElementById('search-input')?.focus(); }
@@ -563,7 +585,7 @@ function loadSettings() {
     try { return JSON.parse(localStorage.getItem(settingsKey()) || '{}'); }
     catch { return {}; }
   }
-  return { ...settings };
+  return {};
 }
 
 function saveSettings(obj, syncServer = true) {
