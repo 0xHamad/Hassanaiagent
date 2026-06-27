@@ -129,6 +129,10 @@ tr:last-child td { border-bottom: none; }
 .action-btn.btn-unblock { border-color: #a7f3d0; color: #059669; }
 .action-btn.btn-danger { border-color: #fecaca; background: #fef2f2; color: #b91c1c; }
 
+.pw-cell { min-width: 140px; }
+.pw-cell .link-btn { margin-left: 4px; }
+.pw-plain { font-family: ui-monospace, monospace; font-size: 12px; }
+
 @media (max-width: 900px) {
   .admin-app { grid-template-columns: 1fr; }
   .admin-sidebar { border-right: none; border-bottom: 1px solid var(--border); }

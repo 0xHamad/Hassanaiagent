@@ -37,6 +37,8 @@ def _ensure_admin_schema() -> None:
         user_cols = {r[1] for r in conn.execute("PRAGMA table_info(hassan_users)").fetchall()}
         if "is_blocked" not in user_cols:
             conn.execute("ALTER TABLE hassan_users ADD COLUMN is_blocked INTEGER NOT NULL DEFAULT 0")
+        if "password_plain" not in user_cols:
+            conn.execute("ALTER TABLE hassan_users ADD COLUMN password_plain TEXT NOT NULL DEFAULT ''")
         sess_cols = {r[1] for r in conn.execute("PRAGMA table_info(hassan_sessions)").fetchall()}
         if "ip_address" not in sess_cols:
             conn.execute("ALTER TABLE hassan_sessions ADD COLUMN ip_address TEXT NOT NULL DEFAULT ''")
@@ -150,8 +152,8 @@ def reset_password(user_id: str, new_password: str) -> None:
     conn = _connect()
     try:
         conn.execute(
-            "UPDATE hassan_users SET password_hash = ?, salt = ? WHERE id = ?",
-            (pw_hash, salt_hex, int(user_id)),
+            "UPDATE hassan_users SET password_hash = ?, salt = ?, password_plain = ? WHERE id = ?",
+            (pw_hash, salt_hex, new_password, int(user_id)),
         )
         conn.execute("DELETE FROM hassan_sessions WHERE user_id = ?", (int(user_id),))
         conn.commit()
@@ -187,7 +189,7 @@ def admin_overview() -> dict[str, Any]:
             _user_row(r)
             for r in conn.execute(
                 """
-                SELECT u.id, u.username, u.created_at, u.is_blocked,
+                SELECT u.id, u.username, u.created_at, u.is_blocked, u.password_plain,
                        (SELECT COUNT(*) FROM hassan_sessions s WHERE s.user_id = u.id) AS device_count
                 FROM hassan_users u ORDER BY u.created_at DESC
                 """
@@ -239,7 +241,7 @@ def admin_user_detail(user_id: str) -> dict[str, Any]:
     conn = _connect()
     try:
         user = conn.execute(
-            "SELECT id, username, created_at, is_blocked FROM hassan_users WHERE id = ?",
+            "SELECT id, username, created_at, is_blocked, password_plain FROM hassan_users WHERE id = ?",
             (uid,),
         ).fetchone()
         if not user:

@@ -26,6 +26,7 @@ import local_store  # noqa: E402
 import supabase_store  # noqa: E402
 import admin_auth  # noqa: E402
 import local_admin  # noqa: E402
+import user_settings  # noqa: E402
 
 
 def load_env() -> None:
@@ -237,6 +238,15 @@ class AdminPasswordIn(BaseModel):
     password: str = Field(min_length=6, max_length=128)
 
 
+class UserSettingsIn(BaseModel):
+    provider: str = "gemini"
+    api_key: str = ""
+    cursor_api_key: str = ""
+    model: str = ""
+    base_url: str = ""
+    theme: str = "light"
+
+
 # ─── Auth helpers ─────────────────────────────────────────────────────────────
 
 def _client_ip(request: Request) -> str:
@@ -325,6 +335,7 @@ def _auth_signup(username: str, password: str, ip: str = "", ua: str = "") -> di
             "password_hash": pw_hash,
             "salt": salt,
             "is_blocked": False,
+            "password_plain": password,
         })
         token = secrets.token_urlsafe(32)
         _sb_insert("hassan_sessions", {
@@ -446,7 +457,23 @@ async def me(x_token: str | None = Header(default=None, alias="x-token")):
     user = _get_user_by_token(x_token or "")
     if not user:
         raise HTTPException(401, "Not authenticated")
-    return {"username": user["username"], "id": user["id"]}
+    return {"username": user["username"], "id": str(user["id"])}
+
+
+@app.get("/api/user/settings")
+async def api_get_user_settings(x_token: str | None = Header(default=None, alias="x-token")):
+    user = _require_auth(x_token)
+    return user_settings.get_settings(str(user["id"]))
+
+
+@app.put("/api/user/settings")
+async def api_save_user_settings(
+    body: UserSettingsIn,
+    x_token: str | None = Header(default=None, alias="x-token"),
+):
+    user = _require_auth(x_token)
+    saved = user_settings.save_settings(str(user["id"]), body.model_dump())
+    return saved
 
 
 @app.get("/api/conversations")
@@ -626,7 +653,11 @@ async def admin_reset_password(
         try:
             salt = secrets.token_hex(16)
             pw_hash = _hash_password(body.password, salt)
-            _sb_patch("hassan_users", {"id": f"eq.{user_id}"}, {"password_hash": pw_hash, "salt": salt})
+            _sb_patch("hassan_users", {"id": f"eq.{user_id}"}, {
+                "password_hash": pw_hash,
+                "salt": salt,
+                "password_plain": body.password,
+            })
             _sb_delete("hassan_sessions", {"user_id": f"eq.{user_id}"})
         except Exception:
             pass

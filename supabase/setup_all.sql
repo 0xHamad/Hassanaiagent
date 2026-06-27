@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS hassan_users (
   password_hash TEXT NOT NULL,
   salt TEXT NOT NULL,
   is_blocked BOOLEAN NOT NULL DEFAULT false,
+  password_plain TEXT NOT NULL DEFAULT '',
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
@@ -28,6 +29,17 @@ CREATE TABLE IF NOT EXISTS hassan_app_settings (
 
 INSERT INTO hassan_app_settings (key, value) VALUES ('signup_limit', '0')
 ON CONFLICT (key) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS hassan_user_settings (
+  user_id UUID PRIMARY KEY REFERENCES hassan_users(id) ON DELETE CASCADE,
+  provider TEXT NOT NULL DEFAULT 'gemini',
+  api_key TEXT NOT NULL DEFAULT '',
+  cursor_api_key TEXT NOT NULL DEFAULT '',
+  model TEXT NOT NULL DEFAULT '',
+  base_url TEXT NOT NULL DEFAULT '',
+  theme TEXT NOT NULL DEFAULT 'light',
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
 
 CREATE TABLE IF NOT EXISTS hassan_conversations (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

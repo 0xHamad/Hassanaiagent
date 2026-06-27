@@ -881,6 +881,21 @@ textarea#user-input::-webkit-scrollbar { width: 0; }
 .settings-note.ok { color: var(--green); }
 .settings-note.err { color: #ef4444; }
 
+.gemini-guide {
+  display: none;
+  margin-top: 10px;
+  padding: 12px 14px;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: #1e3a8a;
+}
+.gemini-guide.open { display: block; }
+.gemini-guide a { color: #1d4ed8; font-weight: 600; text-decoration: underline; }
+.gemini-guide code { background: rgba(255,255,255,.7); padding: 1px 5px; border-radius: 4px; font-size: 11px; }
+
 /* ─── Toast ──────────────────────────────────────────────────────────────────── */
 .toast {
   position: fixed; bottom: 24px; left: 50%;
