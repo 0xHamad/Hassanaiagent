@@ -1,0 +1,16 @@
+[Unit]
+Description=Hassan AI Agent (FastAPI)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/hassanaiagent/web
+EnvironmentFile=/root/hassanaiagent/.env
+Environment=PATH=/root/hassanaiagent/venv/bin:/usr/local/bin:/usr/bin
+ExecStart=/root/hassanaiagent/venv/bin/python -m uvicorn app:app --host 127.0.0.1 --port 8080
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
