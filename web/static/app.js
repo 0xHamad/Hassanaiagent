@@ -127,7 +127,13 @@ async function doLogin() {
       body: JSON.stringify({ username, password }),
     });
     const data = await readJsonResponse(r);
-    if (!r.ok) { errEl.textContent = data.detail || 'Login failed.'; return; }
+    if (!r.ok) {
+      const msg = data.detail || 'Login failed.';
+      errEl.textContent = r.status === 403 && msg.toLowerCase().includes('block')
+        ? 'Your account has been blocked. Contact admin.'
+        : msg;
+      return;
+    }
     authToken = data.token;
     currentUser = { username: data.username };
     localStorage.setItem('hassan_token', authToken);
@@ -169,7 +175,13 @@ async function doSignup() {
       body: JSON.stringify({ username, password }),
     });
     const data = await readJsonResponse(r);
-    if (!r.ok) { errEl.textContent = data.detail || 'Signup failed.'; return; }
+    if (!r.ok) {
+      const msg = data.detail || 'Signup failed.';
+      errEl.textContent = r.status === 403 && msg.toLowerCase().includes('limit')
+        ? 'Signup limit reached. Contact admin.'
+        : msg;
+      return;
+    }
     authToken = data.token;
     currentUser = { username: data.username };
     localStorage.setItem('hassan_token', authToken);

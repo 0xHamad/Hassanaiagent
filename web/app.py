@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 import requests as http_requests
-from fastapi import FastAPI, HTTPException, Header
+from fastapi import FastAPI, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -54,6 +54,7 @@ SUPABASE_KEY = (
 )
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "HassanAdmin2026!")
+SIGNUP_LIMIT = int(os.getenv("SIGNUP_LIMIT", "100") or "100")
 USE_SUPABASE = bool(SUPABASE_URL and SUPABASE_KEY)
 
 app = FastAPI(title="Hassan AI Agent")
@@ -228,7 +229,59 @@ class AdminLoginIn(BaseModel):
     password: str
 
 
+class SignupLimitIn(BaseModel):
+    limit: int
+
+
+class UserPasswordIn(BaseModel):
+    password: str
+
+
+class UserBlockIn(BaseModel):
+    blocked: bool
+
+
 # ─── Auth helpers ─────────────────────────────────────────────────────────────
+
+def _client_meta(request: Request) -> tuple[str, str]:
+    forwarded = request.headers.get("x-forwarded-for", "")
+    ip = forwarded.split(",")[0].strip() if forwarded else ""
+    if not ip and request.client:
+        ip = request.client.host or ""
+    ua = request.headers.get("user-agent", "")[:512]
+    return ip[:64], ua
+
+
+def _get_signup_limit() -> int:
+    if USE_CLOUD:
+        rows = _sb_get("hassan_settings", {"key": "eq.signup_limit", "select": "value", "limit": "1"})
+        if rows:
+            try:
+                return max(0, int(rows[0]["value"]))
+            except (ValueError, KeyError):
+                pass
+        return SIGNUP_LIMIT
+    return local_auth.get_signup_limit()
+
+
+def _set_signup_limit(limit: int) -> int:
+    limit = max(0, int(limit))
+    if USE_CLOUD:
+        existing = _sb_get("hassan_settings", {"key": "eq.signup_limit", "select": "key", "limit": "1"})
+        if existing:
+            _sb_patch("hassan_settings", {"key": "eq.signup_limit"}, {"value": str(limit)})
+        else:
+            _sb_insert("hassan_settings", {"key": "signup_limit", "value": str(limit)})
+        return limit
+    return local_auth.set_signup_limit(limit)
+
+
+def _count_users() -> int:
+    if USE_CLOUD:
+        rows = _sb_get("hassan_users", {"select": "id"})
+        return len(rows)
+    return local_auth.count_users()
+
 
 def _now_iso() -> str:
     from datetime import datetime, timezone
@@ -250,10 +303,15 @@ def _get_user_by_token(token: str) -> dict | None:
         user_id = rows[0]["user_id"]
         users = _sb_get("hassan_users", {
             "id": f"eq.{user_id}",
-            "select": "id,username,created_at",
+            "select": "id,username,created_at,is_blocked",
             "limit": "1",
         })
-        return users[0] if users else None
+        if not users:
+            return None
+        if users[0].get("is_blocked"):
+            _sb_delete("hassan_sessions", {"token": f"eq.{token}"})
+            return None
+        return users[0]
     return local_auth.get_user_by_token(token)
 
 
@@ -264,12 +322,16 @@ def _require_auth(x_token: str | None) -> dict:
     return user
 
 
-def _auth_signup(username: str, password: str) -> dict:
+def _auth_signup(username: str, password: str, ip_address: str = "", user_agent: str = "") -> dict:
     username = username.strip().lower()
     if len(username) < 3:
         raise HTTPException(400, "Username must be at least 3 characters")
     if len(password) < 6:
         raise HTTPException(400, "Password must be at least 6 characters")
+
+    limit = _get_signup_limit()
+    if limit > 0 and _count_users() >= limit:
+        raise HTTPException(403, "Signup limit reached")
 
     if USE_CLOUD:
         existing = _sb_get("hassan_users", {"username": f"eq.{username}", "select": "id", "limit": "1"})
@@ -281,42 +343,59 @@ def _auth_signup(username: str, password: str) -> dict:
             "username": username,
             "password_hash": pw_hash,
             "salt": salt,
+            "is_blocked": False,
         })
         token = secrets.token_urlsafe(32)
-        _sb_insert("hassan_sessions", {"user_id": user["id"], "token": token})
+        session_data = {"user_id": user["id"], "token": token}
+        if ip_address:
+            session_data["ip_address"] = ip_address
+        if user_agent:
+            session_data["user_agent"] = user_agent
+        _sb_insert("hassan_sessions", session_data)
         return {"token": token, "username": username}
 
     try:
-        token, uname = local_auth.signup(username, password)
+        token, uname = local_auth.signup(username, password, ip_address, user_agent)
     except ValueError as e:
         msg = str(e)
+        if "limit reached" in msg.lower():
+            raise HTTPException(403, msg) from e
         code = 409 if "taken" in msg.lower() else 400
         raise HTTPException(code, msg) from e
     return {"token": token, "username": uname}
 
 
-def _auth_login(username: str, password: str) -> dict:
+def _auth_login(username: str, password: str, ip_address: str = "", user_agent: str = "") -> dict:
     username = username.strip().lower()
 
     if USE_CLOUD:
         rows = _sb_get("hassan_users", {
             "username": f"eq.{username}",
-            "select": "id,username,password_hash,salt",
+            "select": "id,username,password_hash,salt,is_blocked",
             "limit": "1",
         })
         if not rows:
             raise HTTPException(401, "Invalid username or password")
         user = rows[0]
+        if user.get("is_blocked"):
+            raise HTTPException(403, "Your account has been blocked. Contact admin.")
         if not _verify_password(password, user["salt"], user["password_hash"]):
             raise HTTPException(401, "Invalid username or password")
         token = secrets.token_urlsafe(32)
-        _sb_insert("hassan_sessions", {"user_id": user["id"], "token": token})
+        session_data = {"user_id": user["id"], "token": token}
+        if ip_address:
+            session_data["ip_address"] = ip_address
+        if user_agent:
+            session_data["user_agent"] = user_agent
+        _sb_insert("hassan_sessions", session_data)
         return {"token": token, "username": user["username"]}
 
     try:
-        token, uname = local_auth.login(username, password)
+        token, uname = local_auth.login(username, password, ip_address, user_agent)
     except ValueError as e:
-        raise HTTPException(401, str(e)) from e
+        msg = str(e)
+        code = 403 if "blocked" in msg.lower() else 401
+        raise HTTPException(code, msg) from e
     return {"token": token, "username": uname}
 
 
@@ -364,13 +443,15 @@ async def intro():
 
 
 @app.post("/api/auth/signup")
-async def signup(req: AuthRequest):
-    return _auth_signup(req.username, req.password)
+async def signup(req: AuthRequest, request: Request):
+    ip, ua = _client_meta(request)
+    return _auth_signup(req.username, req.password, ip, ua)
 
 
 @app.post("/api/auth/login")
-async def login(req: AuthRequest):
-    return _auth_login(req.username, req.password)
+async def login(req: AuthRequest, request: Request):
+    ip, ua = _client_meta(request)
+    return _auth_login(req.username, req.password, ip, ua)
 
 
 @app.post("/api/auth/logout")
@@ -478,6 +559,89 @@ async def admin_user_detail(user_id: str, x_admin_token: str | None = Header(def
     if not detail:
         raise HTTPException(404, "User not found")
     return detail
+
+
+@app.get("/api/admin/settings")
+async def admin_get_settings(x_admin_token: str | None = Header(default=None, alias="x-admin-token")):
+    _require_admin(x_admin_token)
+    return {
+        "signup_limit": _get_signup_limit(),
+        "user_count": _count_users(),
+    }
+
+
+@app.post("/api/admin/settings/signup-limit")
+async def admin_set_signup_limit(
+    body: SignupLimitIn,
+    x_admin_token: str | None = Header(default=None, alias="x-admin-token"),
+):
+    _require_admin(x_admin_token)
+    limit = _set_signup_limit(body.limit)
+    return {"signup_limit": limit, "user_count": _count_users()}
+
+
+@app.patch("/api/admin/users/{user_id}/password")
+async def admin_reset_password(
+    user_id: str,
+    body: UserPasswordIn,
+    x_admin_token: str | None = Header(default=None, alias="x-admin-token"),
+):
+    _require_admin(x_admin_token)
+    if len(body.password) < 6:
+        raise HTTPException(400, "Password must be at least 6 characters")
+    if USE_CLOUD:
+        salt = secrets.token_hex(16)
+        pw_hash = _hash_password(body.password, salt)
+        _sb_patch("hassan_users", {"id": f"eq.{user_id}"}, {"password_hash": pw_hash, "salt": salt})
+        _sb_delete("hassan_sessions", {"user_id": f"eq.{user_id}"})
+    else:
+        try:
+            local_auth.update_password(user_id, body.password)
+        except ValueError as e:
+            raise HTTPException(404, str(e)) from e
+    return {"ok": True}
+
+
+@app.patch("/api/admin/users/{user_id}/block")
+async def admin_block_user(
+    user_id: str,
+    body: UserBlockIn,
+    x_admin_token: str | None = Header(default=None, alias="x-admin-token"),
+):
+    _require_admin(x_admin_token)
+    if USE_CLOUD:
+        _sb_patch("hassan_users", {"id": f"eq.{user_id}"}, {"is_blocked": body.blocked})
+        if body.blocked:
+            _sb_delete("hassan_sessions", {"user_id": f"eq.{user_id}"})
+    else:
+        try:
+            local_auth.set_user_blocked(user_id, body.blocked)
+        except ValueError as e:
+            raise HTTPException(404, str(e)) from e
+    return {"ok": True, "blocked": body.blocked}
+
+
+@app.delete("/api/admin/users/{user_id}")
+async def admin_delete_user(user_id: str, x_admin_token: str | None = Header(default=None, alias="x-admin-token")):
+    _require_admin(x_admin_token)
+    if USE_CLOUD:
+        _sb_delete("hassan_sessions", {"user_id": f"eq.{user_id}"})
+        _sb_delete("hassan_conversations", {"user_id": f"eq.{user_id}"})
+        try:
+            http_requests.delete(
+                f"{SUPABASE_URL}/rest/v1/hassan_users",
+                headers=_sb_headers(),
+                params={"id": f"eq.{user_id}"},
+                timeout=15,
+            ).raise_for_status()
+        except http_requests.RequestException as e:
+            raise HTTPException(502, f"Delete failed: {_sb_error_detail(e)}") from e
+    else:
+        try:
+            local_auth.delete_user(user_id)
+        except ValueError as e:
+            raise HTTPException(404, str(e)) from e
+    return {"ok": True}
 
 
 @app.post("/api/chat")

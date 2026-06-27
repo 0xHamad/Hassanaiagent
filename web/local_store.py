@@ -152,23 +152,57 @@ def delete_conversation(conv_id: str, user_id: str) -> None:
 
 
 def admin_overview() -> dict[str, Any]:
+    import local_auth
+
     with _connect() as conn:
-        users = [dict(r) for r in conn.execute("SELECT id, username, created_at FROM hassan_users ORDER BY created_at DESC").fetchall()]
-        sessions = [dict(r) for r in conn.execute("SELECT token, user_id, created_at, expires_at FROM hassan_sessions ORDER BY created_at DESC LIMIT 200").fetchall()]
-        convs = [dict(r) for r in conn.execute("SELECT id, user_id, title, created_at, updated_at FROM hassan_conversations ORDER BY updated_at DESC LIMIT 200").fetchall()]
+        users = [
+            dict(r)
+            for r in conn.execute(
+                "SELECT id, username, created_at, is_blocked FROM hassan_users ORDER BY created_at DESC"
+            ).fetchall()
+        ]
+        sessions = [
+            dict(r)
+            for r in conn.execute(
+                """
+                SELECT s.token, s.user_id, s.created_at, s.expires_at, s.ip_address, s.user_agent, u.username
+                FROM hassan_sessions s
+                JOIN hassan_users u ON u.id = s.user_id
+                ORDER BY s.created_at DESC LIMIT 500
+                """
+            ).fetchall()
+        ]
+        convs = [
+            dict(r)
+            for r in conn.execute(
+                "SELECT id, user_id, title, created_at, updated_at FROM hassan_conversations ORDER BY updated_at DESC LIMIT 200"
+            ).fetchall()
+        ]
         msg_count = conn.execute("SELECT COUNT(*) AS c FROM hassan_messages").fetchone()["c"]
+
+    device_counts: dict[str, set[str]] = {}
+    for s in sessions:
+        uid = str(s["user_id"])
+        key = f"{s.get('ip_address', '')}|{s.get('user_agent', '')}"
+        device_counts.setdefault(uid, set()).add(key)
+
     for u in users:
         u["id"] = str(u["id"])
+        u["is_blocked"] = bool(u.get("is_blocked", 0))
+        u["device_count"] = len(device_counts.get(u["id"], set()))
+        u["active_sessions"] = sum(1 for x in sessions if str(x["user_id"]) == u["id"])
     for s in sessions:
         s["user_id"] = str(s["user_id"])
     for c in convs:
         c["id"] = str(c["id"])
         c["user_id"] = str(c["user_id"])
+
     return {
         "user_count": len(users),
         "session_count": len(sessions),
         "conversation_count": len(convs),
         "message_count": msg_count,
+        "signup_limit": local_auth.get_signup_limit(),
         "users": users,
         "sessions": sessions,
         "conversations": convs,
@@ -176,14 +210,26 @@ def admin_overview() -> dict[str, Any]:
 
 
 def admin_user_detail(user_id: str) -> dict[str, Any]:
+    import local_auth
+
     uid = int(user_id)
     with _connect() as conn:
-        user = conn.execute("SELECT id, username, created_at FROM hassan_users WHERE id = ?", (uid,)).fetchone()
+        user = conn.execute(
+            "SELECT id, username, created_at, is_blocked FROM hassan_users WHERE id = ?",
+            (uid,),
+        ).fetchone()
         if not user:
             return {}
-        sessions = [dict(r) for r in conn.execute(
-            "SELECT created_at, expires_at FROM hassan_sessions WHERE user_id = ? ORDER BY created_at DESC", (uid,)
-        ).fetchall()]
+        sessions = [
+            dict(r)
+            for r in conn.execute(
+                """
+                SELECT created_at, expires_at, ip_address, user_agent
+                FROM hassan_sessions WHERE user_id = ? ORDER BY created_at DESC
+                """,
+                (uid,),
+            ).fetchall()
+        ]
         conv_rows = conn.execute(
             "SELECT id, title, created_at, updated_at FROM hassan_conversations WHERE user_id = ? ORDER BY updated_at DESC",
             (uid,),
@@ -198,8 +244,15 @@ def admin_user_detail(user_id: str) -> dict[str, Any]:
             "updated_at": c["updated_at"],
             "messages": msgs,
         })
+    devices = local_auth.user_device_summary(user_id)
     return {
-        "user": {"id": str(user["id"]), "username": user["username"], "created_at": user["created_at"]},
+        "user": {
+            "id": str(user["id"]),
+            "username": user["username"],
+            "created_at": user["created_at"],
+            "is_blocked": bool(user["is_blocked"]),
+        },
         "sessions": sessions,
+        "devices": devices,
         "conversations": chats,
     }
