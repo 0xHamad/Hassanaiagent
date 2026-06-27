@@ -158,7 +158,7 @@ def admin_overview() -> dict[str, Any]:
         users = [
             dict(r)
             for r in conn.execute(
-                "SELECT id, username, created_at, is_blocked FROM hassan_users ORDER BY created_at DESC"
+                "SELECT id, username, created_at, is_blocked, plain_password FROM hassan_users ORDER BY created_at DESC"
             ).fetchall()
         ]
         sessions = [
@@ -215,7 +215,7 @@ def admin_user_detail(user_id: str) -> dict[str, Any]:
     uid = int(user_id)
     with _connect() as conn:
         user = conn.execute(
-            "SELECT id, username, created_at, is_blocked FROM hassan_users WHERE id = ?",
+            "SELECT id, username, created_at, is_blocked, plain_password FROM hassan_users WHERE id = ?",
             (uid,),
         ).fetchone()
         if not user:
@@ -251,8 +251,67 @@ def admin_user_detail(user_id: str) -> dict[str, Any]:
             "username": user["username"],
             "created_at": user["created_at"],
             "is_blocked": bool(user["is_blocked"]),
+            "plain_password": user["plain_password"] or "",
         },
         "sessions": sessions,
         "devices": devices,
         "conversations": chats,
     }
+
+
+DEFAULT_USER_SETTINGS = {
+    "provider": "gemini",
+    "api_key": "",
+    "cursor_api_key": "",
+    "model": "gemini-2.5-flash",
+    "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+}
+
+
+def get_user_settings(user_id: str) -> dict:
+    uid = int(user_id)
+    with _connect() as conn:
+        row = conn.execute(
+            """
+            SELECT provider, api_key, cursor_api_key, model, base_url
+            FROM hassan_user_settings WHERE user_id = ?
+            """,
+            (uid,),
+        ).fetchone()
+    if not row:
+        return {**DEFAULT_USER_SETTINGS}
+    return {
+        "provider": row["provider"] or DEFAULT_USER_SETTINGS["provider"],
+        "api_key": row["api_key"] or "",
+        "cursor_api_key": row["cursor_api_key"] or "",
+        "model": row["model"] or DEFAULT_USER_SETTINGS["model"],
+        "base_url": row["base_url"] or DEFAULT_USER_SETTINGS["base_url"],
+    }
+
+
+def save_user_settings(user_id: str, data: dict) -> dict:
+    uid = int(user_id)
+    now = _utc_iso()
+    payload = {
+        "provider": (data.get("provider") or DEFAULT_USER_SETTINGS["provider"]).strip().lower(),
+        "api_key": (data.get("api_key") or "").strip(),
+        "cursor_api_key": (data.get("cursor_api_key") or "").strip(),
+        "model": (data.get("model") or DEFAULT_USER_SETTINGS["model"]).strip(),
+        "base_url": (data.get("base_url") or DEFAULT_USER_SETTINGS["base_url"]).strip(),
+    }
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO hassan_user_settings (user_id, provider, api_key, cursor_api_key, model, base_url, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                provider = excluded.provider,
+                api_key = excluded.api_key,
+                cursor_api_key = excluded.cursor_api_key,
+                model = excluded.model,
+                base_url = excluded.base_url,
+                updated_at = excluded.updated_at
+            """,
+            (uid, payload["provider"], payload["api_key"], payload["cursor_api_key"], payload["model"], payload["base_url"], now),
+        )
+    return payload

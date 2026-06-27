@@ -8,7 +8,7 @@ let activeSession = null;
 let isLoading  = false;
 let currentUser = null;
 let authToken   = localStorage.getItem('hassan_token') || '';
-let settings    = loadSettings();
+let settings    = { ...FALLBACK_DEFAULTS, theme: 'light' };
 
 const FALLBACK_DEFAULTS = {
   provider: 'gemini',
@@ -32,22 +32,35 @@ const topbarTitle   = document.getElementById('topbar-title');
 
 // ─── Boot ──────────────────────────────────────────────────────────────────────
 (async function boot() {
-  applySavedSettings();
-  await applyUserDefaults(false);
+  try { applySavedSettings(); } catch (e) { console.warn('applySavedSettings', e); }
 
-  // Show splash for 2.8s then route
-  setTimeout(async () => {
-    splash.classList.add('fade-out');
-    await sleep(480);
-    splash.style.display = 'none';
+  // Splash timer starts immediately — never block on API
+  setTimeout(finishBoot, 2400);
+  applyUserDefaults(false).catch(() => {});
+})();
 
+async function finishBoot() {
+  try {
+    if (splash) {
+      splash.classList.add('fade-out');
+      await sleep(450);
+      splash.style.display = 'none';
+    }
     if (authToken) {
       const ok = await verifyToken();
-      if (ok) { showDashboard(); return; }
+      if (ok) {
+        await loadUserSettingsFromServer();
+        showDashboard();
+        return;
+      }
     }
     showAuth('login');
-  }, 2900);
-})();
+  } catch (e) {
+    console.error('Boot failed', e);
+    if (splash) splash.style.display = 'none';
+    showAuth('login');
+  }
+}
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
@@ -79,6 +92,7 @@ async function verifyToken() {
     if (!r.ok) { authToken = ''; localStorage.removeItem('hassan_token'); return false; }
     const data = await r.json();
     currentUser = data;
+    await loadUserSettingsFromServer();
     return true;
   } catch { return false; }
 }
@@ -135,9 +149,9 @@ async function doLogin() {
       return;
     }
     authToken = data.token;
-    currentUser = { username: data.username };
+    currentUser = { username: data.username, id: data.id || '' };
     localStorage.setItem('hassan_token', authToken);
-    await applyUserDefaults(false);
+    await loadUserSettingsFromServer();
     showDashboard();
   } catch (e) {
     errEl.textContent = e.message === 'Failed to fetch'
@@ -183,9 +197,9 @@ async function doSignup() {
       return;
     }
     authToken = data.token;
-    currentUser = { username: data.username };
+    currentUser = { username: data.username, id: data.id || '' };
     localStorage.setItem('hassan_token', authToken);
-    await applyUserDefaults(false);
+    await loadUserSettingsFromServer();
     showDashboard();
   } catch (e) {
     errEl.textContent = e.message === 'Failed to fetch'
@@ -462,6 +476,7 @@ async function doLogout() {
   try { await fetch('/api/auth/logout', { method: 'POST', headers: { 'x-token': authToken } }); } catch {}
   authToken = '';
   currentUser = null;
+  settings = { ...FALLBACK_DEFAULTS };
   localStorage.removeItem('hassan_token');
   dashboard.style.display = 'none';
   authEventsBound = false;
@@ -496,7 +511,10 @@ function bindDashboardEvents() {
   document.getElementById('close-settings').addEventListener('click', closeSettings);
   settingsModal.addEventListener('click', e => { if (e.target === settingsModal) closeSettings(); });
   document.getElementById('save-settings').addEventListener('click', doSaveSettings);
-  document.getElementById('set-provider').addEventListener('change', toggleCursorRow);
+  document.getElementById('set-provider').addEventListener('change', () => {
+    toggleCursorRow();
+    toggleGeminiGuide();
+  });
 
   document.getElementById('logout-btn').addEventListener('click', doLogout);
 
@@ -517,7 +535,28 @@ function bindDashboardEvents() {
   });
 }
 
-// ─── Settings ──────────────────────────────────────────────────────────────────
+// ─── Settings (per-user on server) ─────────────────────────────────────────────
+async function loadUserSettingsFromServer() {
+  if (!authToken) return;
+  try {
+    const r = await fetch('/api/user/settings', { headers: { 'x-token': authToken } });
+    if (!r.ok) return;
+    const data = await r.json();
+    settings = {
+      provider: data.provider || FALLBACK_DEFAULTS.provider,
+      api_key: data.api_key || '',
+      cursor_api_key: data.cursor_api_key || '',
+      model: data.model || FALLBACK_DEFAULTS.model,
+      base_url: data.base_url || FALLBACK_DEFAULTS.base_url,
+      theme: loadTheme(),
+    };
+    applySavedSettings();
+    toggleGeminiGuide();
+  } catch (e) {
+    console.warn('loadUserSettings', e);
+  }
+}
+
 async function applyUserDefaults(force) {
   let defs = { ...FALLBACK_DEFAULTS };
   try {
@@ -531,40 +570,45 @@ async function applyUserDefaults(force) {
       };
     }
   } catch {}
-  const cur = loadSettings();
-  if (force || !cur.provider) {
-    saveSettings({ ...defs, api_key: cur.api_key || '', cursor_api_key: cur.cursor_api_key || '' });
-    settings = loadSettings();
+  if (force && authToken) {
+    settings = { ...settings, ...defs };
+    applySavedSettings();
   }
+}
+
+function loadTheme() {
+  try { return localStorage.getItem('hassan_theme') || 'light'; } catch { return 'light'; }
+}
+function saveTheme(theme) {
+  try { localStorage.setItem('hassan_theme', theme); } catch {}
 }
 
 function loadSettings() {
-  try { return JSON.parse(localStorage.getItem('hassan_settings') || '{}'); }
-  catch { return {}; }
+  return { theme: loadTheme() };
 }
 function saveSettings(obj) {
   settings = { ...settings, ...obj };
-  localStorage.setItem('hassan_settings', JSON.stringify(settings));
+  if (obj.theme) saveTheme(obj.theme);
 }
 function applySavedSettings() {
-  ensureDefaultSettings();
   const g = id => document.getElementById(id);
   if (g('set-provider')) g('set-provider').value = settings.provider || FALLBACK_DEFAULTS.provider;
-  if (settings.api_key && g('set-api-key')) g('set-api-key').value = settings.api_key;
-  if (settings.cursor_api_key && g('set-cursor-key')) g('set-cursor-key').value = settings.cursor_api_key;
+  if (g('set-api-key')) g('set-api-key').value = settings.api_key || '';
+  if (g('set-cursor-key')) g('set-cursor-key').value = settings.cursor_api_key || '';
   if (g('set-model')) g('set-model').value = settings.model || FALLBACK_DEFAULTS.model;
   if (g('set-base-url')) g('set-base-url').value = settings.base_url || FALLBACK_DEFAULTS.base_url;
-  if (settings.theme) applyTheme(settings.theme);
+  const theme = settings.theme || loadTheme();
+  applyTheme(theme);
   toggleCursorRow();
+  toggleGeminiGuide();
 }
 
-function ensureDefaultSettings() {
-  if (!settings.provider) {
-    saveSettings({ ...FALLBACK_DEFAULTS, ...settings });
-    settings = loadSettings();
-  }
+function openSettings() {
+  settingsModal.classList.add('open');
+  settingsStatus.textContent = '';
+  settingsStatus.className = 'settings-note';
+  toggleGeminiGuide();
 }
-function openSettings() { settingsModal.classList.add('open'); settingsStatus.textContent = ''; settingsStatus.className = 'settings-note'; }
 function closeSettings() { settingsModal.classList.remove('open'); }
 function toggleCursorRow() {
   const el = document.getElementById('set-provider');
@@ -572,12 +616,37 @@ function toggleCursorRow() {
   const row = document.getElementById('cursor-key-row');
   if (row) row.style.display = el.value === 'cursor' ? 'flex' : 'none';
 }
-function doSaveSettings() {
+function toggleGeminiGuide() {
+  const el = document.getElementById('set-provider');
+  const box = document.getElementById('gemini-guide');
+  if (!el || !box) return;
+  box.style.display = el.value === 'gemini' ? 'block' : 'none';
+}
+async function doSaveSettings() {
   const g = id => document.getElementById(id)?.value?.trim() || '';
-  saveSettings({ provider: g('set-provider'), api_key: g('set-api-key'), cursor_api_key: g('set-cursor-key'), model: g('set-model'), base_url: g('set-base-url') });
-  settingsStatus.textContent = 'Settings saved!';
-  settingsStatus.className = 'settings-note ok';
-  setTimeout(closeSettings, 900);
+  const payload = {
+    provider: g('set-provider'),
+    api_key: g('set-api-key'),
+    cursor_api_key: g('set-cursor-key'),
+    model: g('set-model'),
+    base_url: g('set-base-url'),
+  };
+  settings = { ...settings, ...payload };
+  try {
+    const r = await fetch('/api/user/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'x-token': authToken },
+      body: JSON.stringify(payload),
+    });
+    const data = await readJsonResponse(r);
+    if (!r.ok) throw new Error(data.detail || 'Save failed');
+    settingsStatus.textContent = 'Settings saved for your account!';
+    settingsStatus.className = 'settings-note ok';
+    setTimeout(closeSettings, 900);
+  } catch (e) {
+    settingsStatus.textContent = e.message || 'Could not save settings';
+    settingsStatus.className = 'settings-note err';
+  }
 }
 
 // ─── Theme ─────────────────────────────────────────────────────────────────────

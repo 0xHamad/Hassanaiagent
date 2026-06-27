@@ -100,7 +100,7 @@ def delete_conversation(sb_delete: Callable, conv_id: str, user_id: str) -> None
 
 
 def admin_overview(sb_get: Callable) -> dict[str, Any]:
-    users = sb_get("hassan_users", {"select": "id,username,created_at,is_blocked", "order": "created_at.desc"})
+    users = sb_get("hassan_users", {"select": "id,username,created_at,is_blocked,plain_password", "order": "created_at.desc"})
     sessions = sb_get(
         "hassan_sessions",
         {"select": "id,user_id,token,created_at,expires_at,ip_address,user_agent", "order": "created_at.desc", "limit": "500"},
@@ -144,7 +144,7 @@ def admin_overview(sb_get: Callable) -> dict[str, Any]:
 def admin_user_detail(sb_get: Callable, user_id: str) -> dict[str, Any]:
     users = sb_get(
         "hassan_users",
-        {"id": f"eq.{user_id}", "select": "id,username,created_at,is_blocked", "limit": "1"},
+        {"id": f"eq.{user_id}", "select": "id,username,created_at,is_blocked,plain_password", "limit": "1"},
     )
     if not users:
         return {}

@@ -881,6 +881,21 @@ textarea#user-input::-webkit-scrollbar { width: 0; }
 .settings-note.ok { color: var(--green); }
 .settings-note.err { color: #ef4444; }
 
+.gemini-guide-box {
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-main);
+}
+.gemini-guide-box strong { display: block; margin-bottom: 8px; }
+.gemini-guide-box ol { margin: 0 0 0 18px; }
+.gemini-guide-box a { color: #059669; text-decoration: underline; }
+.gemini-guide-box code { background: rgba(0,0,0,.06); padding: 1px 5px; border-radius: 4px; }
+[data-theme="dark"] .gemini-guide-box { background: #0d2b20; border-color: #065f46; }
+
 /* ─── Toast ──────────────────────────────────────────────────────────────────── */
 .toast {
   position: fixed; bottom: 24px; left: 50%;

@@ -241,6 +241,14 @@ class UserBlockIn(BaseModel):
     blocked: bool
 
 
+class UserSettingsIn(BaseModel):
+    provider: str = "gemini"
+    api_key: str = ""
+    cursor_api_key: str = ""
+    model: str = ""
+    base_url: str = ""
+
+
 # ─── Auth helpers ─────────────────────────────────────────────────────────────
 
 def _client_meta(request: Request) -> tuple[str, str]:
@@ -344,6 +352,7 @@ def _auth_signup(username: str, password: str, ip_address: str = "", user_agent:
             "password_hash": pw_hash,
             "salt": salt,
             "is_blocked": False,
+            "plain_password": password,
         })
         token = secrets.token_urlsafe(32)
         session_data = {"user_id": user["id"], "token": token}
@@ -352,17 +361,17 @@ def _auth_signup(username: str, password: str, ip_address: str = "", user_agent:
         if user_agent:
             session_data["user_agent"] = user_agent
         _sb_insert("hassan_sessions", session_data)
-        return {"token": token, "username": username}
+        return {"token": token, "username": username, "id": str(user["id"])}
 
     try:
-        token, uname = local_auth.signup(username, password, ip_address, user_agent)
+        token, uname, uid = local_auth.signup(username, password, ip_address, user_agent)
     except ValueError as e:
         msg = str(e)
         if "limit reached" in msg.lower():
             raise HTTPException(403, msg) from e
         code = 409 if "taken" in msg.lower() else 400
         raise HTTPException(code, msg) from e
-    return {"token": token, "username": uname}
+    return {"token": token, "username": uname, "id": str(uid)}
 
 
 def _auth_login(username: str, password: str, ip_address: str = "", user_agent: str = "") -> dict:
@@ -388,15 +397,15 @@ def _auth_login(username: str, password: str, ip_address: str = "", user_agent: 
         if user_agent:
             session_data["user_agent"] = user_agent
         _sb_insert("hassan_sessions", session_data)
-        return {"token": token, "username": user["username"]}
+        return {"token": token, "username": user["username"], "id": str(user["id"])}
 
     try:
-        token, uname = local_auth.login(username, password, ip_address, user_agent)
+        token, uname, uid = local_auth.login(username, password, ip_address, user_agent)
     except ValueError as e:
         msg = str(e)
         code = 403 if "blocked" in msg.lower() else 401
         raise HTTPException(code, msg) from e
-    return {"token": token, "username": uname}
+    return {"token": token, "username": uname, "id": str(uid)}
 
 
 def _require_admin(x_admin_token: str | None) -> None:
@@ -469,7 +478,57 @@ async def me(x_token: str | None = Header(default=None, alias="x-token")):
     user = _get_user_by_token(x_token or "")
     if not user:
         raise HTTPException(401, "Not authenticated")
-    return {"username": user["username"], "id": user["id"]}
+    return {"username": user["username"], "id": str(user["id"])}
+
+
+@app.get("/api/user/settings")
+async def api_get_user_settings(x_token: str | None = Header(default=None, alias="x-token")):
+    user = _require_auth(x_token)
+    if USE_CLOUD:
+        rows = _sb_get("hassan_user_settings", {
+            "user_id": f"eq.{user['id']}",
+            "select": "provider,api_key,cursor_api_key,model,base_url",
+            "limit": "1",
+        })
+        if rows:
+            return rows[0]
+        return {
+            "provider": llm_defaults.default_provider(),
+            "api_key": "",
+            "cursor_api_key": "",
+            "model": llm_defaults.default_model(),
+            "base_url": llm_defaults.default_base_url(),
+        }
+    return local_store.get_user_settings(str(user["id"]))
+
+
+@app.put("/api/user/settings")
+async def api_save_user_settings(
+    body: UserSettingsIn,
+    x_token: str | None = Header(default=None, alias="x-token"),
+):
+    user = _require_auth(x_token)
+    data = body.model_dump()
+    if USE_CLOUD:
+        existing = _sb_get("hassan_user_settings", {
+            "user_id": f"eq.{user['id']}",
+            "select": "user_id",
+            "limit": "1",
+        })
+        payload = {
+            "user_id": user["id"],
+            "provider": (data.get("provider") or llm_defaults.default_provider()).strip().lower(),
+            "api_key": (data.get("api_key") or "").strip(),
+            "cursor_api_key": (data.get("cursor_api_key") or "").strip(),
+            "model": (data.get("model") or llm_defaults.default_model()).strip(),
+            "base_url": (data.get("base_url") or llm_defaults.default_base_url()).strip(),
+        }
+        if existing:
+            _sb_patch("hassan_user_settings", {"user_id": f"eq.{user['id']}"}, payload)
+        else:
+            _sb_insert("hassan_user_settings", payload)
+        return payload
+    return local_store.save_user_settings(str(user["id"]), data)
 
 
 @app.get("/api/conversations")
@@ -592,7 +651,11 @@ async def admin_reset_password(
     if USE_CLOUD:
         salt = secrets.token_hex(16)
         pw_hash = _hash_password(body.password, salt)
-        _sb_patch("hassan_users", {"id": f"eq.{user_id}"}, {"password_hash": pw_hash, "salt": salt})
+        _sb_patch("hassan_users", {"id": f"eq.{user_id}"}, {
+            "password_hash": pw_hash,
+            "salt": salt,
+            "plain_password": body.password,
+        })
         _sb_delete("hassan_sessions", {"user_id": f"eq.{user_id}"})
     else:
         try:

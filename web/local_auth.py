@@ -35,12 +35,28 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE hassan_sessions ADD COLUMN ip_address TEXT NOT NULL DEFAULT ''")
     if "user_agent" not in sess_cols:
         conn.execute("ALTER TABLE hassan_sessions ADD COLUMN user_agent TEXT NOT NULL DEFAULT ''")
+    if "plain_password" not in cols:
+        conn.execute("ALTER TABLE hassan_users ADD COLUMN plain_password TEXT NOT NULL DEFAULT ''")
 
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS hassan_settings (
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS hassan_user_settings (
+            user_id INTEGER PRIMARY KEY,
+            provider TEXT NOT NULL DEFAULT 'gemini',
+            api_key TEXT NOT NULL DEFAULT '',
+            cursor_api_key TEXT NOT NULL DEFAULT '',
+            model TEXT NOT NULL DEFAULT '',
+            base_url TEXT NOT NULL DEFAULT '',
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES hassan_users(id) ON DELETE CASCADE
         )
         """
     )
@@ -132,7 +148,7 @@ def count_users() -> int:
         return conn.execute("SELECT COUNT(*) AS c FROM hassan_users").fetchone()["c"]
 
 
-def signup(username: str, password: str, ip_address: str = "", user_agent: str = "") -> tuple[str, str]:
+def signup(username: str, password: str, ip_address: str = "", user_agent: str = "") -> tuple[str, str, int]:
     u = username.strip().lower()
     if not USERNAME_RE.match(u):
         raise ValueError("Username: 3–32 chars, letters/numbers/underscore only")
@@ -155,17 +171,17 @@ def signup(username: str, password: str, ip_address: str = "", user_agent: str =
         if exists:
             raise ValueError("Username already taken")
         cur = conn.execute(
-            "INSERT INTO hassan_users (username, password_hash, salt, created_at, is_blocked) VALUES (?, ?, ?, ?, 0)",
-            (u, pw_hash, salt_hex, now),
+            "INSERT INTO hassan_users (username, password_hash, salt, created_at, is_blocked, plain_password) VALUES (?, ?, ?, ?, 0, ?)",
+            (u, pw_hash, salt_hex, now, password),
         )
         user_id = cur.lastrowid
 
     token = secrets.token_urlsafe(32)
     _create_session(user_id, token, ip_address, user_agent)
-    return token, u
+    return token, u, user_id
 
 
-def login(username: str, password: str, ip_address: str = "", user_agent: str = "") -> tuple[str, str]:
+def login(username: str, password: str, ip_address: str = "", user_agent: str = "") -> tuple[str, str, int]:
     u = username.strip().lower()
     with _connect() as conn:
         row = conn.execute(
@@ -179,7 +195,7 @@ def login(username: str, password: str, ip_address: str = "", user_agent: str = 
 
     token = secrets.token_urlsafe(32)
     _create_session(row["id"], token, ip_address, user_agent)
-    return token, row["username"]
+    return token, row["username"], row["id"]
 
 
 def logout(token: str) -> None:
@@ -236,8 +252,8 @@ def update_password(user_id: str, new_password: str) -> None:
     pw_hash = _hash_password(new_password, salt_hex)
     with _connect() as conn:
         cur = conn.execute(
-            "UPDATE hassan_users SET password_hash = ?, salt = ? WHERE id = ?",
-            (pw_hash, salt_hex, int(user_id)),
+            "UPDATE hassan_users SET password_hash = ?, salt = ?, plain_password = ? WHERE id = ?",
+            (pw_hash, salt_hex, new_password, int(user_id)),
         )
         if cur.rowcount == 0:
             raise ValueError("User not found")
@@ -274,7 +290,7 @@ def delete_user(user_id: str) -> None:
 def get_user_row(user_id: str) -> dict[str, Any] | None:
     with _connect() as conn:
         row = conn.execute(
-            "SELECT id, username, created_at, is_blocked FROM hassan_users WHERE id = ?",
+            "SELECT id, username, created_at, is_blocked, plain_password FROM hassan_users WHERE id = ?",
             (int(user_id),),
         ).fetchone()
         if not row:
@@ -284,6 +300,7 @@ def get_user_row(user_id: str) -> dict[str, Any] | None:
             "username": row["username"],
             "created_at": row["created_at"],
             "is_blocked": bool(row["is_blocked"]),
+            "plain_password": row["plain_password"] or "",
         }
 
 

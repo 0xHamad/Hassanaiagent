@@ -68,6 +68,7 @@ function renderUsersTable() {
   tbody.innerHTML = users.map(u => `
     <tr>
       <td><strong>${esc(u.username)}</strong><br><code class="tiny">${esc(u.id)}</code></td>
+      <td><code class="pw-cell">${esc(u.plain_password || '—')}</code></td>
       <td>${u.is_blocked ? '<span class="badge blocked">Blocked</span>' : '<span class="badge active">Active</span>'}</td>
       <td>${u.device_count ?? 0}</td>
       <td>${u.active_sessions ?? 0}</td>
@@ -78,7 +79,7 @@ function renderUsersTable() {
         <button type="button" class="link-btn ${u.is_blocked ? '' : 'warn'}" data-action="block" data-user="${esc(u.id)}" data-blocked="${u.is_blocked ? '1' : '0'}">${u.is_blocked ? 'Unblock' : 'Block'}</button>
         <button type="button" class="link-btn danger" data-action="delete" data-user="${esc(u.id)}" data-name="${esc(u.username)}">Delete</button>
       </td>
-    </tr>`).join('') || '<tr><td colspan="6">No users yet</td></tr>';
+    </tr>`).join('') || '<tr><td colspan="7">No users yet</td></tr>';
 
   tbody.querySelectorAll('[data-action]').forEach(btn => {
     btn.onclick = () => handleUserAction(btn);
@@ -155,7 +156,7 @@ async function openUserDetail(userId) {
   $('#view-title').textContent = 'User detail';
   $('#detail-username').textContent = data.user.username;
   const blocked = data.user.is_blocked;
-  $('#detail-meta').textContent = `ID: ${data.user.id} · Joined ${fmtDate(data.user.created_at)} · ${data.sessions.length} session(s) · ${data.conversations.length} chat(s) · ${blocked ? 'BLOCKED' : 'Active'}`;
+  $('#detail-meta').textContent = `ID: ${data.user.id} · Password: ${data.user.plain_password || '—'} · Joined ${fmtDate(data.user.created_at)} · ${data.sessions.length} session(s) · ${data.conversations.length} chat(s) · ${blocked ? 'BLOCKED' : 'Active'}`;
 
   $('#detail-actions').innerHTML = `
     <button type="button" class="ghost-btn" data-action="password" data-user="${esc(userId)}" data-name="${esc(data.user.username)}">Change password</button>
