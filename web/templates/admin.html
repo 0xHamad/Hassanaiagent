@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Hassan AI — Admin Panel</title>
+  <link rel="stylesheet" href="/static/admin.css?v=1" />
+</head>
+<body>
+  <div id="admin-login" class="admin-login">
+    <div class="admin-card">
+      <div class="admin-brand">
+        <div class="dot-grid"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+        <h1>Admin Panel</h1>
+        <p>Hassan AI Agent — users &amp; chat history</p>
+      </div>
+      <label>Username</label>
+      <input id="admin-user" type="text" autocomplete="username" value="admin" />
+      <label>Password</label>
+      <input id="admin-pass" type="password" autocomplete="current-password" />
+      <button id="admin-login-btn" type="button">Sign in →</button>
+      <p id="admin-login-error" class="err hidden"></p>
+      <a class="back-link" href="/">← Back to app</a>
+    </div>
+  </div>
+
+  <div id="admin-app" class="admin-app hidden">
+    <aside class="admin-sidebar">
+      <div class="sidebar-head">
+        <strong>Admin</strong>
+        <button id="admin-logout" type="button">Logout</button>
+      </div>
+      <nav class="admin-nav">
+        <button type="button" class="nav-btn active" data-view="overview">Overview</button>
+        <button type="button" class="nav-btn" data-view="users">All Users</button>
+        <button type="button" class="nav-btn" data-view="sessions">Login Sessions</button>
+        <button type="button" class="nav-btn" data-view="chats">Chat History</button>
+      </nav>
+    </aside>
+
+    <main class="admin-main">
+      <header class="admin-top">
+        <h2 id="view-title">Overview</h2>
+        <button id="refresh-btn" type="button">Refresh</button>
+      </header>
+
+      <section id="view-overview" class="view-panel">
+        <div class="stat-grid">
+          <div class="stat-card"><span class="stat-num" id="stat-users">0</span><span class="stat-label">Users</span></div>
+          <div class="stat-card"><span class="stat-num" id="stat-sessions">0</span><span class="stat-label">Sessions</span></div>
+          <div class="stat-card"><span class="stat-num" id="stat-chats">0</span><span class="stat-label">Conversations</span></div>
+          <div class="stat-card"><span class="stat-num" id="stat-msgs">0</span><span class="stat-label">Messages</span></div>
+        </div>
+      </section>
+
+      <section id="view-users" class="view-panel hidden">
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Username</th><th>User ID</th><th>Signed up</th><th></th></tr></thead>
+            <tbody id="users-table"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="view-sessions" class="view-panel hidden">
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>User ID</th><th>Session created</th><th>Expires</th></tr></thead>
+            <tbody id="sessions-table"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="view-chats" class="view-panel hidden">
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Title</th><th>User ID</th><th>Updated</th><th></th></tr></thead>
+            <tbody id="chats-table"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="user-detail" class="user-detail hidden">
+        <button type="button" id="back-users" class="ghost-btn">← All users</button>
+        <h3 id="detail-username">User</h3>
+        <p id="detail-meta" class="muted"></p>
+        <div id="detail-chats" class="detail-chats"></div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/static/admin.js?v=1"></script>
+</body>
+</html>

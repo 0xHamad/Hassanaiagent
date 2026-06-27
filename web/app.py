@@ -10,6 +10,7 @@ from pathlib import Path
 
 import requests as http_requests
 from fastapi import FastAPI, HTTPException, Header
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -19,6 +20,10 @@ sys.path.insert(0, str(ROOT))
 
 from llm_router import LlmConfig, chat_completion  # noqa: E402
 from hassan_prompt import CHAT_SYSTEM, HASSAN_INTRO  # noqa: E402
+import local_auth  # noqa: E402
+import local_store  # noqa: E402
+import supabase_store  # noqa: E402
+import admin_auth  # noqa: E402
 
 
 def load_env() -> None:
@@ -46,13 +51,24 @@ SUPABASE_KEY = (
     or os.getenv("VITE_SUPABASE_ANON_KEY")
     or ""
 )
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "HassanAdmin2026!")
+USE_SUPABASE = bool(SUPABASE_URL and SUPABASE_KEY)
 
 app = FastAPI(title="Hassan AI Agent")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=os.getenv("CORS_ORIGINS", "*").split(","),
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 HERE = Path(__file__).resolve().parent
 app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
 
 _INDEX_HTML = (HERE / "templates" / "index.html").read_text(encoding="utf-8")
+_ADMIN_HTML = (HERE / "templates" / "admin.html").read_text(encoding="utf-8")
 
 
 # ─── Supabase helpers ─────────────────────────────────────────────────────────
@@ -66,39 +82,114 @@ def _sb_headers() -> dict:
     }
 
 
+def _sb_error_detail(exc: Exception) -> str:
+    if isinstance(exc, http_requests.HTTPError) and exc.response is not None:
+        try:
+            body = exc.response.json()
+            if isinstance(body, dict):
+                msg = body.get("message") or body.get("hint") or body.get("details")
+                if msg:
+                    return str(msg)
+        except Exception:
+            pass
+        text = (exc.response.text or "").strip()
+        if text:
+            return text[:240]
+    return str(exc)
+
+
 def _sb_get(table: str, params: dict) -> list:
-    r = http_requests.get(
-        f"{SUPABASE_URL}/rest/v1/{table}",
-        headers=_sb_headers(),
-        params=params,
-        timeout=10,
-    )
-    r.raise_for_status()
-    return r.json()
+    if not USE_SUPABASE:
+        raise HTTPException(503, "Supabase is not configured")
+    try:
+        r = http_requests.get(
+            f"{SUPABASE_URL}/rest/v1/{table}",
+            headers=_sb_headers(),
+            params=params,
+            timeout=15,
+        )
+        r.raise_for_status()
+        return r.json()
+    except HTTPException:
+        raise
+    except http_requests.RequestException as e:
+        raise HTTPException(502, f"Database connection failed: {_sb_error_detail(e)}") from e
 
 
 def _sb_insert(table: str, data: dict) -> dict:
-    r = http_requests.post(
-        f"{SUPABASE_URL}/rest/v1/{table}",
-        headers=_sb_headers(),
-        json=data,
-        timeout=10,
-    )
-    r.raise_for_status()
-    rows = r.json()
-    return rows[0] if rows else {}
+    if not USE_SUPABASE:
+        raise HTTPException(503, "Supabase is not configured")
+    try:
+        r = http_requests.post(
+            f"{SUPABASE_URL}/rest/v1/{table}",
+            headers=_sb_headers(),
+            json=data,
+            timeout=15,
+        )
+        r.raise_for_status()
+        rows = r.json()
+        return rows[0] if rows else {}
+    except HTTPException:
+        raise
+    except http_requests.RequestException as e:
+        raise HTTPException(502, f"Database write failed: {_sb_error_detail(e)}") from e
 
 
 def _sb_delete(table: str, params: dict) -> None:
-    http_requests.delete(
-        f"{SUPABASE_URL}/rest/v1/{table}",
-        headers=_sb_headers(),
-        params=params,
-        timeout=10,
-    )
+    if not USE_SUPABASE:
+        return
+    try:
+        http_requests.delete(
+            f"{SUPABASE_URL}/rest/v1/{table}",
+            headers=_sb_headers(),
+            params=params,
+            timeout=15,
+        ).raise_for_status()
+    except http_requests.RequestException:
+        pass
 
 
-# ─── Password helpers ─────────────────────────────────────────────────────────
+def _sb_patch(table: str, params: dict, data: dict) -> None:
+    if not USE_SUPABASE:
+        raise HTTPException(503, "Supabase is not configured")
+    try:
+        http_requests.patch(
+            f"{SUPABASE_URL}/rest/v1/{table}",
+            headers=_sb_headers(),
+            params=params,
+            json=data,
+            timeout=15,
+        ).raise_for_status()
+    except HTTPException:
+        raise
+    except http_requests.RequestException as e:
+        raise HTTPException(502, f"Database update failed: {_sb_error_detail(e)}") from e
+
+
+def _probe_supabase() -> bool:
+    if not USE_SUPABASE:
+        return False
+    try:
+        http_requests.get(
+            f"{SUPABASE_URL}/rest/v1/hassan_users",
+            headers=_sb_headers(),
+            params={"select": "id", "limit": "1"},
+            timeout=10,
+        ).raise_for_status()
+        return True
+    except Exception:
+        return False
+
+
+SUPABASE_READY = _probe_supabase()
+USE_CLOUD = USE_SUPABASE and SUPABASE_READY
+
+if not USE_CLOUD:
+    local_auth.init_db()
+    local_store.init_chat_db()
+
+
+# ─── Password helpers (Supabase) ──────────────────────────────────────────────
 
 def _hash_password(password: str, salt: str) -> str:
     return hashlib.pbkdf2_hmac(
@@ -119,6 +210,7 @@ class AuthRequest(BaseModel):
 
 class ChatRequest(BaseModel):
     messages: list[dict]
+    conversation_id: str = ""
     provider: str = ""
     api_key: str = ""
     cursor_api_key: str = ""
@@ -126,31 +218,42 @@ class ChatRequest(BaseModel):
     base_url: str = ""
 
 
+class ConversationIn(BaseModel):
+    title: str = "New Chat"
+
+
+class AdminLoginIn(BaseModel):
+    username: str
+    password: str
+
+
 # ─── Auth helpers ─────────────────────────────────────────────────────────────
-
-def _get_user_by_token(token: str) -> dict | None:
-    if not token:
-        return None
-    rows = _sb_get("hassan_sessions", {
-        "token": f"eq.{token}",
-        "expires_at": f"gt.{_now_iso()}",
-        "select": "user_id",
-        "limit": "1",
-    })
-    if not rows:
-        return None
-    user_id = rows[0]["user_id"]
-    users = _sb_get("hassan_users", {
-        "id": f"eq.{user_id}",
-        "select": "id,username,created_at",
-        "limit": "1",
-    })
-    return users[0] if users else None
-
 
 def _now_iso() -> str:
     from datetime import datetime, timezone
     return datetime.now(timezone.utc).isoformat()
+
+
+def _get_user_by_token(token: str) -> dict | None:
+    if not token:
+        return None
+    if USE_CLOUD:
+        rows = _sb_get("hassan_sessions", {
+            "token": f"eq.{token}",
+            "expires_at": f"gt.{_now_iso()}",
+            "select": "user_id",
+            "limit": "1",
+        })
+        if not rows:
+            return None
+        user_id = rows[0]["user_id"]
+        users = _sb_get("hassan_users", {
+            "id": f"eq.{user_id}",
+            "select": "id,username,created_at",
+            "limit": "1",
+        })
+        return users[0] if users else None
+    return local_auth.get_user_by_token(token)
 
 
 def _require_auth(x_token: str | None) -> dict:
@@ -160,11 +263,87 @@ def _require_auth(x_token: str | None) -> dict:
     return user
 
 
+def _auth_signup(username: str, password: str) -> dict:
+    username = username.strip().lower()
+    if len(username) < 3:
+        raise HTTPException(400, "Username must be at least 3 characters")
+    if len(password) < 6:
+        raise HTTPException(400, "Password must be at least 6 characters")
+
+    if USE_CLOUD:
+        existing = _sb_get("hassan_users", {"username": f"eq.{username}", "select": "id", "limit": "1"})
+        if existing:
+            raise HTTPException(409, "Username already taken")
+        salt = secrets.token_hex(16)
+        pw_hash = _hash_password(password, salt)
+        user = _sb_insert("hassan_users", {
+            "username": username,
+            "password_hash": pw_hash,
+            "salt": salt,
+        })
+        token = secrets.token_urlsafe(32)
+        _sb_insert("hassan_sessions", {"user_id": user["id"], "token": token})
+        return {"token": token, "username": username}
+
+    try:
+        token, uname = local_auth.signup(username, password)
+    except ValueError as e:
+        msg = str(e)
+        code = 409 if "taken" in msg.lower() else 400
+        raise HTTPException(code, msg) from e
+    return {"token": token, "username": uname}
+
+
+def _auth_login(username: str, password: str) -> dict:
+    username = username.strip().lower()
+
+    if USE_CLOUD:
+        rows = _sb_get("hassan_users", {
+            "username": f"eq.{username}",
+            "select": "id,username,password_hash,salt",
+            "limit": "1",
+        })
+        if not rows:
+            raise HTTPException(401, "Invalid username or password")
+        user = rows[0]
+        if not _verify_password(password, user["salt"], user["password_hash"]):
+            raise HTTPException(401, "Invalid username or password")
+        token = secrets.token_urlsafe(32)
+        _sb_insert("hassan_sessions", {"user_id": user["id"], "token": token})
+        return {"token": token, "username": user["username"]}
+
+    try:
+        token, uname = local_auth.login(username, password)
+    except ValueError as e:
+        raise HTTPException(401, str(e)) from e
+    return {"token": token, "username": uname}
+
+
+def _require_admin(x_admin_token: str | None) -> None:
+    if not admin_auth.verify_admin_token(x_admin_token):
+        raise HTTPException(401, "Admin login required")
+
+
 # ─── Routes ───────────────────────────────────────────────────────────────────
+
+@app.get("/admin", response_class=HTMLResponse)
+async def admin_page():
+    return HTMLResponse(_ADMIN_HTML)
+
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
     return HTMLResponse(_INDEX_HTML)
+
+
+@app.get("/api/health")
+async def health():
+    return {
+        "ok": True,
+        "auth_backend": "supabase" if USE_CLOUD else "sqlite",
+        "supabase_configured": USE_SUPABASE,
+        "supabase_ready": SUPABASE_READY,
+    }
 
 
 @app.get("/api/intro")
@@ -174,56 +353,21 @@ async def intro():
 
 @app.post("/api/auth/signup")
 async def signup(req: AuthRequest):
-    username = req.username.strip().lower()
-    if len(username) < 3:
-        raise HTTPException(400, "Username must be at least 3 characters")
-    if len(req.password) < 6:
-        raise HTTPException(400, "Password must be at least 6 characters")
-
-    existing = _sb_get("hassan_users", {"username": f"eq.{username}", "select": "id", "limit": "1"})
-    if existing:
-        raise HTTPException(409, "Username already taken")
-
-    salt = secrets.token_hex(16)
-    pw_hash = _hash_password(req.password, salt)
-
-    user = _sb_insert("hassan_users", {
-        "username": username,
-        "password_hash": pw_hash,
-        "salt": salt,
-    })
-
-    token = secrets.token_urlsafe(32)
-    _sb_insert("hassan_sessions", {"user_id": user["id"], "token": token})
-
-    return {"token": token, "username": username}
+    return _auth_signup(req.username, req.password)
 
 
 @app.post("/api/auth/login")
 async def login(req: AuthRequest):
-    username = req.username.strip().lower()
-    rows = _sb_get("hassan_users", {
-        "username": f"eq.{username}",
-        "select": "id,username,password_hash,salt",
-        "limit": "1",
-    })
-    if not rows:
-        raise HTTPException(401, "Invalid username or password")
-
-    user = rows[0]
-    if not _verify_password(req.password, user["salt"], user["password_hash"]):
-        raise HTTPException(401, "Invalid username or password")
-
-    token = secrets.token_urlsafe(32)
-    _sb_insert("hassan_sessions", {"user_id": user["id"], "token": token})
-
-    return {"token": token, "username": user["username"]}
+    return _auth_login(req.username, req.password)
 
 
 @app.post("/api/auth/logout")
 async def logout(x_token: str | None = Header(default=None, alias="x-token")):
     if x_token:
-        _sb_delete("hassan_sessions", {"token": f"eq.{x_token}"})
+        if USE_CLOUD:
+            _sb_delete("hassan_sessions", {"token": f"eq.{x_token}"})
+        else:
+            local_auth.logout(x_token)
     return {"ok": True}
 
 
@@ -235,12 +379,132 @@ async def me(x_token: str | None = Header(default=None, alias="x-token")):
     return {"username": user["username"], "id": user["id"]}
 
 
+@app.get("/api/conversations")
+async def api_list_conversations(x_token: str | None = Header(default=None, alias="x-token")):
+    user = _require_auth(x_token)
+    if USE_CLOUD:
+        convs = supabase_store.list_conversations(_sb_get, str(user["id"]))
+    else:
+        convs = local_store.list_conversations(str(user["id"]))
+    return {"conversations": convs}
+
+
+@app.post("/api/conversations")
+async def api_create_conversation(
+    body: ConversationIn | None = None,
+    x_token: str | None = Header(default=None, alias="x-token"),
+):
+    user = _require_auth(x_token)
+    title = body.title if body else "New Chat"
+    if USE_CLOUD:
+        conv = supabase_store.create_conversation(_sb_insert, str(user["id"]), title)
+    else:
+        conv = local_store.create_conversation(str(user["id"]), title)
+    return conv
+
+
+@app.get("/api/conversations/{conv_id}")
+async def api_get_conversation(conv_id: str, x_token: str | None = Header(default=None, alias="x-token")):
+    user = _require_auth(x_token)
+    if USE_CLOUD:
+        conv = supabase_store.get_conversation(_sb_get, conv_id, str(user["id"]))
+        if not conv:
+            raise HTTPException(404, "Conversation not found")
+        msgs = supabase_store.list_messages(_sb_get, conv_id)
+    else:
+        conv = local_store.get_conversation(conv_id, str(user["id"]))
+        if not conv:
+            raise HTTPException(404, "Conversation not found")
+        msgs = local_store.list_messages(conv_id)
+    return {"conversation": conv, "messages": msgs}
+
+
+@app.delete("/api/conversations/{conv_id}")
+async def api_delete_conversation(conv_id: str, x_token: str | None = Header(default=None, alias="x-token")):
+    user = _require_auth(x_token)
+    if USE_CLOUD:
+        conv = supabase_store.get_conversation(_sb_get, conv_id, str(user["id"]))
+        if not conv:
+            raise HTTPException(404, "Conversation not found")
+        supabase_store.delete_conversation(_sb_delete, conv_id, str(user["id"]))
+    else:
+        conv = local_store.get_conversation(conv_id, str(user["id"]))
+        if not conv:
+            raise HTTPException(404, "Conversation not found")
+        local_store.delete_conversation(conv_id, str(user["id"]))
+    return {"ok": True}
+
+
+@app.post("/api/admin/login")
+async def admin_login(body: AdminLoginIn):
+    if body.username.strip() != ADMIN_USERNAME or body.password != ADMIN_PASSWORD:
+        raise HTTPException(401, "Invalid admin credentials")
+    return {"token": admin_auth.issue_admin_token(), "username": ADMIN_USERNAME}
+
+
+@app.post("/api/admin/logout")
+async def admin_logout(x_admin_token: str | None = Header(default=None, alias="x-admin-token")):
+    admin_auth.revoke_admin_token(x_admin_token)
+    return {"ok": True}
+
+
+@app.get("/api/admin/overview")
+async def admin_overview(x_admin_token: str | None = Header(default=None, alias="x-admin-token")):
+    _require_admin(x_admin_token)
+    if USE_CLOUD:
+        return supabase_store.admin_overview(_sb_get)
+    return local_store.admin_overview()
+
+
+@app.get("/api/admin/users/{user_id}")
+async def admin_user_detail(user_id: str, x_admin_token: str | None = Header(default=None, alias="x-admin-token")):
+    _require_admin(x_admin_token)
+    if USE_CLOUD:
+        detail = supabase_store.admin_user_detail(_sb_get, user_id)
+    else:
+        detail = local_store.admin_user_detail(user_id)
+    if not detail:
+        raise HTTPException(404, "User not found")
+    return detail
+
+
 @app.post("/api/chat")
 async def chat(
     req: ChatRequest,
     x_token: str | None = Header(default=None, alias="x-token"),
 ):
-    _require_auth(x_token)
+    user = _require_auth(x_token)
+    conv_id = (req.conversation_id or "").strip()
+    user_text = ""
+    if req.messages:
+        for m in reversed(req.messages):
+            if m.get("role") == "user":
+                user_text = str(m.get("content") or "").strip()
+                break
+
+    if USE_CLOUD:
+        if conv_id:
+            conv = supabase_store.get_conversation(_sb_get, conv_id, str(user["id"]))
+            if not conv:
+                raise HTTPException(404, "Conversation not found")
+        else:
+            conv = supabase_store.create_conversation(_sb_insert, str(user["id"]))
+            conv_id = conv["id"]
+        if user_text:
+            if conv.get("title") in ("New Chat", ""):
+                supabase_store.rename_conversation(_sb_patch, conv_id, user_text[:60])
+            supabase_store.add_message(_sb_insert, _sb_patch, conv_id, "user", user_text)
+    elif user_text:
+        if not conv_id:
+            conv = local_store.create_conversation(str(user["id"]))
+            conv_id = conv["id"]
+        else:
+            conv = local_store.get_conversation(conv_id, str(user["id"]))
+            if not conv:
+                raise HTTPException(404, "Conversation not found")
+        if conv.get("title") in ("New Chat", ""):
+            local_store.rename_conversation(conv_id, user_text[:60])
+        local_store.add_message(conv_id, "user", user_text)
 
     cfg = LlmConfig(
         provider=req.provider or os.getenv("BUILDER_LLM", "deepseek"),
@@ -274,7 +538,11 @@ async def chat(
 
     try:
         reply = chat_completion(req.messages, cfg, system=CHAT_SYSTEM)
-        return {"reply": reply}
+        if USE_CLOUD and conv_id:
+            supabase_store.add_message(_sb_insert, _sb_patch, conv_id, "assistant", reply)
+        elif conv_id:
+            local_store.add_message(conv_id, "assistant", reply)
+        return {"reply": reply, "conversation_id": conv_id or None}
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
