@@ -9,11 +9,11 @@ import sys
 from pathlib import Path
 
 import requests as http_requests
-from fastapi import FastAPI, HTTPException, Header
+from fastapi import FastAPI, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -25,6 +25,7 @@ import local_auth  # noqa: E402
 import local_store  # noqa: E402
 import supabase_store  # noqa: E402
 import admin_auth  # noqa: E402
+import local_admin  # noqa: E402
 
 
 def load_env() -> None:
@@ -228,7 +229,27 @@ class AdminLoginIn(BaseModel):
     password: str
 
 
+class SignupLimitIn(BaseModel):
+    limit: int = 0
+
+
+class AdminPasswordIn(BaseModel):
+    password: str = Field(min_length=6, max_length=128)
+
+
 # ─── Auth helpers ─────────────────────────────────────────────────────────────
+
+def _client_ip(request: Request) -> str:
+    xf = request.headers.get("x-forwarded-for", "")
+    if xf:
+        return xf.split(",")[0].strip()[:64]
+    if request.client and request.client.host:
+        return request.client.host[:64]
+    return ""
+
+
+def _client_ua(request: Request) -> str:
+    return (request.headers.get("user-agent") or "")[:512]
 
 def _now_iso() -> str:
     from datetime import datetime, timezone
@@ -250,10 +271,14 @@ def _get_user_by_token(token: str) -> dict | None:
         user_id = rows[0]["user_id"]
         users = _sb_get("hassan_users", {
             "id": f"eq.{user_id}",
-            "select": "id,username,created_at",
+            "select": "id,username,created_at,is_blocked",
             "limit": "1",
         })
-        return users[0] if users else None
+        if not users:
+            return None
+        if users[0].get("is_blocked"):
+            return None
+        return users[0]
     return local_auth.get_user_by_token(token)
 
 
@@ -261,10 +286,27 @@ def _require_auth(x_token: str | None) -> dict:
     user = _get_user_by_token(x_token or "")
     if not user:
         raise HTTPException(status_code=401, detail="Not authenticated")
+    if user.get("is_blocked"):
+        raise HTTPException(status_code=403, detail="Your account has been blocked. Contact admin.")
     return user
 
 
-def _auth_signup(username: str, password: str) -> dict:
+def _cloud_signup_limit_check() -> None:
+    try:
+        rows = _sb_get("hassan_app_settings", {"key": "eq.signup_limit", "select": "value", "limit": "1"})
+        limit = int(rows[0]["value"]) if rows else 0
+        if limit <= 0:
+            return
+        users = _sb_get("hassan_users", {"select": "id"})
+        if len(users) >= limit:
+            raise HTTPException(403, "Signup limit reached. Registration is closed.")
+    except HTTPException:
+        raise
+    except Exception:
+        return
+
+
+def _auth_signup(username: str, password: str, ip: str = "", ua: str = "") -> dict:
     username = username.strip().lower()
     if len(username) < 3:
         raise HTTPException(400, "Username must be at least 3 characters")
@@ -272,6 +314,7 @@ def _auth_signup(username: str, password: str) -> dict:
         raise HTTPException(400, "Password must be at least 6 characters")
 
     if USE_CLOUD:
+        _cloud_signup_limit_check()
         existing = _sb_get("hassan_users", {"username": f"eq.{username}", "select": "id", "limit": "1"})
         if existing:
             raise HTTPException(409, "Username already taken")
@@ -281,42 +324,57 @@ def _auth_signup(username: str, password: str) -> dict:
             "username": username,
             "password_hash": pw_hash,
             "salt": salt,
+            "is_blocked": False,
         })
         token = secrets.token_urlsafe(32)
-        _sb_insert("hassan_sessions", {"user_id": user["id"], "token": token})
+        _sb_insert("hassan_sessions", {
+            "user_id": user["id"],
+            "token": token,
+            "ip_address": ip,
+            "user_agent": ua,
+        })
         return {"token": token, "username": username}
 
     try:
-        token, uname = local_auth.signup(username, password)
+        token, uname = local_auth.signup(username, password, ip, ua)
     except ValueError as e:
         msg = str(e)
-        code = 409 if "taken" in msg.lower() else 400
+        code = 409 if "taken" in msg.lower() else 403 if "limit" in msg.lower() else 400
         raise HTTPException(code, msg) from e
     return {"token": token, "username": uname}
 
 
-def _auth_login(username: str, password: str) -> dict:
+def _auth_login(username: str, password: str, ip: str = "", ua: str = "") -> dict:
     username = username.strip().lower()
 
     if USE_CLOUD:
         rows = _sb_get("hassan_users", {
             "username": f"eq.{username}",
-            "select": "id,username,password_hash,salt",
+            "select": "id,username,password_hash,salt,is_blocked",
             "limit": "1",
         })
         if not rows:
             raise HTTPException(401, "Invalid username or password")
         user = rows[0]
+        if user.get("is_blocked"):
+            raise HTTPException(403, "Your account has been blocked. Contact admin.")
         if not _verify_password(password, user["salt"], user["password_hash"]):
             raise HTTPException(401, "Invalid username or password")
         token = secrets.token_urlsafe(32)
-        _sb_insert("hassan_sessions", {"user_id": user["id"], "token": token})
+        _sb_insert("hassan_sessions", {
+            "user_id": user["id"],
+            "token": token,
+            "ip_address": ip,
+            "user_agent": ua,
+        })
         return {"token": token, "username": user["username"]}
 
     try:
-        token, uname = local_auth.login(username, password)
+        token, uname = local_auth.login(username, password, ip, ua)
     except ValueError as e:
-        raise HTTPException(401, str(e)) from e
+        msg = str(e)
+        code = 403 if "blocked" in msg.lower() else 401
+        raise HTTPException(code, msg) from e
     return {"token": token, "username": uname}
 
 
@@ -364,13 +422,13 @@ async def intro():
 
 
 @app.post("/api/auth/signup")
-async def signup(req: AuthRequest):
-    return _auth_signup(req.username, req.password)
+async def signup(req: AuthRequest, request: Request):
+    return _auth_signup(req.username, req.password, _client_ip(request), _client_ua(request))
 
 
 @app.post("/api/auth/login")
-async def login(req: AuthRequest):
-    return _auth_login(req.username, req.password)
+async def login(req: AuthRequest, request: Request):
+    return _auth_login(req.username, req.password, _client_ip(request), _client_ua(request))
 
 
 @app.post("/api/auth/logout")
@@ -461,23 +519,118 @@ async def admin_logout(x_admin_token: str | None = Header(default=None, alias="x
 
 
 @app.get("/api/admin/overview")
-async def admin_overview(x_admin_token: str | None = Header(default=None, alias="x-admin-token")):
+async def admin_overview_route(x_admin_token: str | None = Header(default=None, alias="x-admin-token")):
     _require_admin(x_admin_token)
     if USE_CLOUD:
-        return supabase_store.admin_overview(_sb_get)
-    return local_store.admin_overview()
+        try:
+            return supabase_store.admin_overview(_sb_get)
+        except HTTPException:
+            return local_admin.admin_overview()
+    return local_admin.admin_overview()
+
+
+@app.get("/api/admin/settings")
+async def admin_settings_get(x_admin_token: str | None = Header(default=None, alias="x-admin-token")):
+    _require_admin(x_admin_token)
+    return local_admin.admin_settings()
+
+
+@app.post("/api/admin/settings/signup-limit")
+async def admin_settings_signup_limit(
+    body: SignupLimitIn,
+    x_admin_token: str | None = Header(default=None, alias="x-admin-token"),
+):
+    _require_admin(x_admin_token)
+    limit = local_admin.set_signup_limit(body.limit)
+    if USE_CLOUD:
+        try:
+            rows = _sb_get("hassan_app_settings", {"key": "eq.signup_limit", "select": "key", "limit": "1"})
+            if rows:
+                _sb_patch("hassan_app_settings", {"key": "eq.signup_limit"}, {"value": str(limit)})
+            else:
+                _sb_insert("hassan_app_settings", {"key": "signup_limit", "value": str(limit)})
+        except Exception:
+            pass
+    return local_admin.admin_settings()
 
 
 @app.get("/api/admin/users/{user_id}")
-async def admin_user_detail(user_id: str, x_admin_token: str | None = Header(default=None, alias="x-admin-token")):
+async def admin_user_detail_route(user_id: str, x_admin_token: str | None = Header(default=None, alias="x-admin-token")):
     _require_admin(x_admin_token)
     if USE_CLOUD:
-        detail = supabase_store.admin_user_detail(_sb_get, user_id)
+        try:
+            detail = supabase_store.admin_user_detail(_sb_get, user_id)
+        except HTTPException:
+            detail = local_admin.admin_user_detail(user_id)
     else:
-        detail = local_store.admin_user_detail(user_id)
+        detail = local_admin.admin_user_detail(user_id)
     if not detail:
         raise HTTPException(404, "User not found")
     return detail
+
+
+@app.post("/api/admin/users/{user_id}/block")
+async def admin_block_user(user_id: str, x_admin_token: str | None = Header(default=None, alias="x-admin-token")):
+    _require_admin(x_admin_token)
+    local_admin.block_user(user_id)
+    if USE_CLOUD:
+        try:
+            _sb_patch("hassan_users", {"id": f"eq.{user_id}"}, {"is_blocked": True})
+            _sb_delete("hassan_sessions", {"user_id": f"eq.{user_id}"})
+        except Exception:
+            pass
+    return {"ok": True, "blocked": True}
+
+
+@app.post("/api/admin/users/{user_id}/unblock")
+async def admin_unblock_user(user_id: str, x_admin_token: str | None = Header(default=None, alias="x-admin-token")):
+    _require_admin(x_admin_token)
+    local_admin.unblock_user(user_id)
+    if USE_CLOUD:
+        try:
+            _sb_patch("hassan_users", {"id": f"eq.{user_id}"}, {"is_blocked": False})
+        except Exception:
+            pass
+    return {"ok": True, "blocked": False}
+
+
+@app.delete("/api/admin/users/{user_id}")
+async def admin_delete_user(user_id: str, x_admin_token: str | None = Header(default=None, alias="x-admin-token")):
+    _require_admin(x_admin_token)
+    local_admin.delete_user(user_id)
+    if USE_CLOUD:
+        try:
+            convs = _sb_get("hassan_conversations", {"user_id": f"eq.{user_id}", "select": "id"})
+            for c in convs:
+                _sb_delete("hassan_messages", {"conversation_id": f"eq.{c['id']}"})
+            _sb_delete("hassan_conversations", {"user_id": f"eq.{user_id}"})
+            _sb_delete("hassan_sessions", {"user_id": f"eq.{user_id}"})
+            _sb_delete("hassan_users", {"id": f"eq.{user_id}"})
+        except Exception:
+            pass
+    return {"ok": True}
+
+
+@app.post("/api/admin/users/{user_id}/password")
+async def admin_reset_password(
+    user_id: str,
+    body: AdminPasswordIn,
+    x_admin_token: str | None = Header(default=None, alias="x-admin-token"),
+):
+    _require_admin(x_admin_token)
+    try:
+        local_admin.reset_password(user_id, body.password)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    if USE_CLOUD:
+        try:
+            salt = secrets.token_hex(16)
+            pw_hash = _hash_password(body.password, salt)
+            _sb_patch("hassan_users", {"id": f"eq.{user_id}"}, {"password_hash": pw_hash, "salt": salt})
+            _sb_delete("hassan_sessions", {"user_id": f"eq.{user_id}"})
+        except Exception:
+            pass
+    return {"ok": True}
 
 
 @app.post("/api/chat")
