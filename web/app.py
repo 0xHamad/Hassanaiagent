@@ -10,6 +10,7 @@ from pathlib import Path
 
 import requests as http_requests
 from fastapi import FastAPI, HTTPException, Header
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -19,6 +20,7 @@ sys.path.insert(0, str(ROOT))
 
 from llm_router import LlmConfig, chat_completion  # noqa: E402
 from hassan_prompt import CHAT_SYSTEM, HASSAN_INTRO  # noqa: E402
+import local_auth  # noqa: E402
 
 
 def load_env() -> None:
@@ -46,13 +48,24 @@ SUPABASE_KEY = (
     or os.getenv("VITE_SUPABASE_ANON_KEY")
     or ""
 )
+USE_SUPABASE = bool(SUPABASE_URL and SUPABASE_KEY)
 
 app = FastAPI(title="Hassan AI Agent")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=os.getenv("CORS_ORIGINS", "*").split(","),
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 HERE = Path(__file__).resolve().parent
 app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
 
 _INDEX_HTML = (HERE / "templates" / "index.html").read_text(encoding="utf-8")
+
+if not USE_SUPABASE:
+    local_auth.init_db()
 
 
 # ─── Supabase helpers ─────────────────────────────────────────────────────────
@@ -66,39 +79,74 @@ def _sb_headers() -> dict:
     }
 
 
+def _sb_error_detail(exc: Exception) -> str:
+    if isinstance(exc, http_requests.HTTPError) and exc.response is not None:
+        try:
+            body = exc.response.json()
+            if isinstance(body, dict):
+                msg = body.get("message") or body.get("hint") or body.get("details")
+                if msg:
+                    return str(msg)
+        except Exception:
+            pass
+        text = (exc.response.text or "").strip()
+        if text:
+            return text[:240]
+    return str(exc)
+
+
 def _sb_get(table: str, params: dict) -> list:
-    r = http_requests.get(
-        f"{SUPABASE_URL}/rest/v1/{table}",
-        headers=_sb_headers(),
-        params=params,
-        timeout=10,
-    )
-    r.raise_for_status()
-    return r.json()
+    if not USE_SUPABASE:
+        raise HTTPException(503, "Supabase is not configured")
+    try:
+        r = http_requests.get(
+            f"{SUPABASE_URL}/rest/v1/{table}",
+            headers=_sb_headers(),
+            params=params,
+            timeout=15,
+        )
+        r.raise_for_status()
+        return r.json()
+    except HTTPException:
+        raise
+    except http_requests.RequestException as e:
+        raise HTTPException(502, f"Database connection failed: {_sb_error_detail(e)}") from e
 
 
 def _sb_insert(table: str, data: dict) -> dict:
-    r = http_requests.post(
-        f"{SUPABASE_URL}/rest/v1/{table}",
-        headers=_sb_headers(),
-        json=data,
-        timeout=10,
-    )
-    r.raise_for_status()
-    rows = r.json()
-    return rows[0] if rows else {}
+    if not USE_SUPABASE:
+        raise HTTPException(503, "Supabase is not configured")
+    try:
+        r = http_requests.post(
+            f"{SUPABASE_URL}/rest/v1/{table}",
+            headers=_sb_headers(),
+            json=data,
+            timeout=15,
+        )
+        r.raise_for_status()
+        rows = r.json()
+        return rows[0] if rows else {}
+    except HTTPException:
+        raise
+    except http_requests.RequestException as e:
+        raise HTTPException(502, f"Database write failed: {_sb_error_detail(e)}") from e
 
 
 def _sb_delete(table: str, params: dict) -> None:
-    http_requests.delete(
-        f"{SUPABASE_URL}/rest/v1/{table}",
-        headers=_sb_headers(),
-        params=params,
-        timeout=10,
-    )
+    if not USE_SUPABASE:
+        return
+    try:
+        http_requests.delete(
+            f"{SUPABASE_URL}/rest/v1/{table}",
+            headers=_sb_headers(),
+            params=params,
+            timeout=15,
+        ).raise_for_status()
+    except http_requests.RequestException:
+        pass
 
 
-# ─── Password helpers ─────────────────────────────────────────────────────────
+# ─── Password helpers (Supabase) ──────────────────────────────────────────────
 
 def _hash_password(password: str, salt: str) -> str:
     return hashlib.pbkdf2_hmac(
@@ -128,29 +176,31 @@ class ChatRequest(BaseModel):
 
 # ─── Auth helpers ─────────────────────────────────────────────────────────────
 
-def _get_user_by_token(token: str) -> dict | None:
-    if not token:
-        return None
-    rows = _sb_get("hassan_sessions", {
-        "token": f"eq.{token}",
-        "expires_at": f"gt.{_now_iso()}",
-        "select": "user_id",
-        "limit": "1",
-    })
-    if not rows:
-        return None
-    user_id = rows[0]["user_id"]
-    users = _sb_get("hassan_users", {
-        "id": f"eq.{user_id}",
-        "select": "id,username,created_at",
-        "limit": "1",
-    })
-    return users[0] if users else None
-
-
 def _now_iso() -> str:
     from datetime import datetime, timezone
     return datetime.now(timezone.utc).isoformat()
+
+
+def _get_user_by_token(token: str) -> dict | None:
+    if not token:
+        return None
+    if USE_SUPABASE:
+        rows = _sb_get("hassan_sessions", {
+            "token": f"eq.{token}",
+            "expires_at": f"gt.{_now_iso()}",
+            "select": "user_id",
+            "limit": "1",
+        })
+        if not rows:
+            return None
+        user_id = rows[0]["user_id"]
+        users = _sb_get("hassan_users", {
+            "id": f"eq.{user_id}",
+            "select": "id,username,created_at",
+            "limit": "1",
+        })
+        return users[0] if users else None
+    return local_auth.get_user_by_token(token)
 
 
 def _require_auth(x_token: str | None) -> dict:
@@ -160,11 +210,76 @@ def _require_auth(x_token: str | None) -> dict:
     return user
 
 
+def _auth_signup(username: str, password: str) -> dict:
+    username = username.strip().lower()
+    if len(username) < 3:
+        raise HTTPException(400, "Username must be at least 3 characters")
+    if len(password) < 6:
+        raise HTTPException(400, "Password must be at least 6 characters")
+
+    if USE_SUPABASE:
+        existing = _sb_get("hassan_users", {"username": f"eq.{username}", "select": "id", "limit": "1"})
+        if existing:
+            raise HTTPException(409, "Username already taken")
+        salt = secrets.token_hex(16)
+        pw_hash = _hash_password(password, salt)
+        user = _sb_insert("hassan_users", {
+            "username": username,
+            "password_hash": pw_hash,
+            "salt": salt,
+        })
+        token = secrets.token_urlsafe(32)
+        _sb_insert("hassan_sessions", {"user_id": user["id"], "token": token})
+        return {"token": token, "username": username}
+
+    try:
+        token, uname = local_auth.signup(username, password)
+    except ValueError as e:
+        msg = str(e)
+        code = 409 if "taken" in msg.lower() else 400
+        raise HTTPException(code, msg) from e
+    return {"token": token, "username": uname}
+
+
+def _auth_login(username: str, password: str) -> dict:
+    username = username.strip().lower()
+
+    if USE_SUPABASE:
+        rows = _sb_get("hassan_users", {
+            "username": f"eq.{username}",
+            "select": "id,username,password_hash,salt",
+            "limit": "1",
+        })
+        if not rows:
+            raise HTTPException(401, "Invalid username or password")
+        user = rows[0]
+        if not _verify_password(password, user["salt"], user["password_hash"]):
+            raise HTTPException(401, "Invalid username or password")
+        token = secrets.token_urlsafe(32)
+        _sb_insert("hassan_sessions", {"user_id": user["id"], "token": token})
+        return {"token": token, "username": user["username"]}
+
+    try:
+        token, uname = local_auth.login(username, password)
+    except ValueError as e:
+        raise HTTPException(401, str(e)) from e
+    return {"token": token, "username": uname}
+
+
 # ─── Routes ───────────────────────────────────────────────────────────────────
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
     return HTMLResponse(_INDEX_HTML)
+
+
+@app.get("/api/health")
+async def health():
+    return {
+        "ok": True,
+        "auth_backend": "supabase" if USE_SUPABASE else "sqlite",
+        "supabase_configured": USE_SUPABASE,
+    }
 
 
 @app.get("/api/intro")
@@ -174,56 +289,21 @@ async def intro():
 
 @app.post("/api/auth/signup")
 async def signup(req: AuthRequest):
-    username = req.username.strip().lower()
-    if len(username) < 3:
-        raise HTTPException(400, "Username must be at least 3 characters")
-    if len(req.password) < 6:
-        raise HTTPException(400, "Password must be at least 6 characters")
-
-    existing = _sb_get("hassan_users", {"username": f"eq.{username}", "select": "id", "limit": "1"})
-    if existing:
-        raise HTTPException(409, "Username already taken")
-
-    salt = secrets.token_hex(16)
-    pw_hash = _hash_password(req.password, salt)
-
-    user = _sb_insert("hassan_users", {
-        "username": username,
-        "password_hash": pw_hash,
-        "salt": salt,
-    })
-
-    token = secrets.token_urlsafe(32)
-    _sb_insert("hassan_sessions", {"user_id": user["id"], "token": token})
-
-    return {"token": token, "username": username}
+    return _auth_signup(req.username, req.password)
 
 
 @app.post("/api/auth/login")
 async def login(req: AuthRequest):
-    username = req.username.strip().lower()
-    rows = _sb_get("hassan_users", {
-        "username": f"eq.{username}",
-        "select": "id,username,password_hash,salt",
-        "limit": "1",
-    })
-    if not rows:
-        raise HTTPException(401, "Invalid username or password")
-
-    user = rows[0]
-    if not _verify_password(req.password, user["salt"], user["password_hash"]):
-        raise HTTPException(401, "Invalid username or password")
-
-    token = secrets.token_urlsafe(32)
-    _sb_insert("hassan_sessions", {"user_id": user["id"], "token": token})
-
-    return {"token": token, "username": user["username"]}
+    return _auth_login(req.username, req.password)
 
 
 @app.post("/api/auth/logout")
 async def logout(x_token: str | None = Header(default=None, alias="x-token")):
     if x_token:
-        _sb_delete("hassan_sessions", {"token": f"eq.{x_token}"})
+        if USE_SUPABASE:
+            _sb_delete("hassan_sessions", {"token": f"eq.{x_token}"})
+        else:
+            local_auth.logout(x_token)
     return {"ok": True}
 
 

@@ -92,6 +92,12 @@ function bindAuthEvents() {
   document.getElementById('signup-confirm').addEventListener('keydown', e => { if (e.key === 'Enter') doSignup(); });
 }
 
+async function readJsonResponse(r) {
+  const text = await r.text();
+  if (!text) return {};
+  try { return JSON.parse(text); } catch { return { detail: text.slice(0, 200) }; }
+}
+
 async function doLogin() {
   const username = document.getElementById('login-username').value.trim();
   const password = document.getElementById('login-password').value;
@@ -113,14 +119,16 @@ async function doLogin() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password }),
     });
-    const data = await r.json();
+    const data = await readJsonResponse(r);
     if (!r.ok) { errEl.textContent = data.detail || 'Login failed.'; return; }
     authToken = data.token;
     currentUser = { username: data.username };
     localStorage.setItem('hassan_token', authToken);
     showDashboard();
   } catch (e) {
-    errEl.textContent = 'Network error. Try again.';
+    errEl.textContent = e.message === 'Failed to fetch'
+      ? 'Cannot reach server. Run run_web.bat and open http://127.0.0.1:8080'
+      : (e.message || 'Network error. Try again.');
   } finally {
     btn.disabled = false;
     btnText.style.display = '';
@@ -152,14 +160,16 @@ async function doSignup() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password }),
     });
-    const data = await r.json();
+    const data = await readJsonResponse(r);
     if (!r.ok) { errEl.textContent = data.detail || 'Signup failed.'; return; }
     authToken = data.token;
     currentUser = { username: data.username };
     localStorage.setItem('hassan_token', authToken);
     showDashboard();
   } catch (e) {
-    errEl.textContent = 'Network error. Try again.';
+    errEl.textContent = e.message === 'Failed to fetch'
+      ? 'Cannot reach server. Run run_web.bat and open http://127.0.0.1:8080'
+      : (e.message || 'Network error. Try again.');
   } finally {
     btn.disabled = false;
     btnText.style.display = '';
