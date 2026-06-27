@@ -52,7 +52,7 @@ def init_db() -> None:
         conn.commit()
     finally:
         conn.close()
-    import local_admin
+    from web import local_admin
 
     local_admin._ensure_admin_schema()
 
@@ -76,7 +76,7 @@ def _hash_password(password: str, salt_hex: str) -> str:
 
 
 def signup(username: str, password: str, ip_address: str = "", user_agent: str = "") -> tuple[str, str]:
-    import local_admin
+    from web import local_admin
 
     ok, msg = local_admin.signup_allowed()
     if not ok:

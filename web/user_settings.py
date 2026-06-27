@@ -19,7 +19,7 @@ DEFAULTS: dict[str, str] = {
 
 
 def _ensure_schema() -> None:
-    from local_auth import init_db
+    from web.local_auth import init_db
 
     init_db()
     conn = sqlite3.connect(DB_PATH)
