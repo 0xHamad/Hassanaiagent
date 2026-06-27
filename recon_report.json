@@ -1,0 +1,63 @@
+{
+  "url": "https://clutchcitycluckers.com/sms-signup/",
+  "final_url": "https://clutchcitycluckers.com/sms-signup/",
+  "site_base": "https://clutchcitycluckers.com",
+  "title": "Join Our SMS Club | Clutch City Cluckers",
+  "status_code": 200,
+  "forms": [
+    {
+      "action": "https://clutchcitycluckers.com/sms-signup/",
+      "method": "GET",
+      "fields": [
+        {
+          "name": "name",
+          "type": "text",
+          "value": "",
+          "required": true
+        },
+        {
+          "name": "phone",
+          "type": "tel",
+          "value": "",
+          "required": true
+        },
+        {
+          "name": "email",
+          "type": "email",
+          "value": "",
+          "required": false
+        },
+        {
+          "name": "smsConsent",
+          "type": "checkbox",
+          "value": "",
+          "required": false
+        }
+      ]
+    }
+  ],
+  "api_candidates": [],
+  "script_urls": [
+    "https://clutchcitycluckers.com/_next/static/chunks/4bd1b696-cc729d47eba2cee4.js",
+    "https://clutchcitycluckers.com/_next/static/chunks/5964-1cd042199572acb6.js",
+    "https://clutchcitycluckers.com/_next/static/chunks/main-app-bbb1ae0e7ba556ca.js",
+    "https://clutchcitycluckers.com/_next/static/chunks/6874-414075bb21e16c80.js",
+    "https://clutchcitycluckers.com/_next/static/chunks/3063-c447d877a2777f4a.js",
+    "https://clutchcitycluckers.com/_next/static/chunks/9741-dad4e506ac78d29c.js",
+    "https://clutchcitycluckers.com/_next/static/chunks/app/(frontend)/page-612f3b33e8097e6f.js",
+    "https://clutchcitycluckers.com/_next/static/chunks/app/(frontend)/sms-signup/page-8d914c1325300e6a.js",
+    "https://clutchcitycluckers.com/_next/static/chunks/app/(frontend)/layout-1ddfe9bd44777f51.js",
+    "https://clutchcitycluckers.com/_next/static/chunks/polyfills-42372ed130431b0a.js",
+    "https://clutchcitycluckers.com/_next/static/chunks/webpack-babd5a561c1a5034.js"
+  ],
+  "consent_snippets": [
+    "I agree to receive recurring promotional text messages from Clutch City Cluckers at the mobile number provided, including offers, discounts, coupons, store updates, catering promotions, loyalty offers, and limited-time deals. Message frequency varies. Message and data rates may apply. Reply"
+  ],
+  "captcha": [],
+  "cloudflare_likely": true,
+  "phone_field_hints": [
+    "phone",
+    "smsConsent"
+  ],
+  "notes": []
+}
