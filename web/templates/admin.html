@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Hassan AI — Admin Panel</title>
-  <link rel="stylesheet" href="/static/admin.css?v=1" />
+  <link rel="stylesheet" href="/static/admin.css?v=2" />
 </head>
 <body>
   <div id="admin-login" class="admin-login">
@@ -32,6 +32,7 @@
       </div>
       <nav class="admin-nav">
         <button type="button" class="nav-btn active" data-view="overview">Overview</button>
+        <button type="button" class="nav-btn" data-view="settings">Settings</button>
         <button type="button" class="nav-btn" data-view="users">All Users</button>
         <button type="button" class="nav-btn" data-view="sessions">Login Sessions</button>
         <button type="button" class="nav-btn" data-view="chats">Chat History</button>
@@ -47,16 +48,30 @@
       <section id="view-overview" class="view-panel">
         <div class="stat-grid">
           <div class="stat-card"><span class="stat-num" id="stat-users">0</span><span class="stat-label">Users</span></div>
-          <div class="stat-card"><span class="stat-num" id="stat-sessions">0</span><span class="stat-label">Sessions</span></div>
+          <div class="stat-card"><span class="stat-num" id="stat-sessions">0</span><span class="stat-label">Active Sessions</span></div>
+          <div class="stat-card"><span class="stat-num" id="stat-blocked">0</span><span class="stat-label">Blocked</span></div>
           <div class="stat-card"><span class="stat-num" id="stat-chats">0</span><span class="stat-label">Conversations</span></div>
           <div class="stat-card"><span class="stat-num" id="stat-msgs">0</span><span class="stat-label">Messages</span></div>
+        </div>
+        <div id="signup-status" class="signup-status"></div>
+      </section>
+
+      <section id="view-settings" class="view-panel hidden">
+        <div class="settings-card">
+          <h3>Signup limit</h3>
+          <p class="muted">Maximum accounts allowed. Set <strong>0</strong> for unlimited signups.</p>
+          <div class="settings-row">
+            <input id="signup-limit-input" type="number" min="0" step="1" value="0" />
+            <button id="save-signup-limit" type="button">Save limit</button>
+          </div>
+          <p id="signup-limit-msg" class="settings-msg muted"></p>
         </div>
       </section>
 
       <section id="view-users" class="view-panel hidden">
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Username</th><th>User ID</th><th>Signed up</th><th></th></tr></thead>
+            <thead><tr><th>Username</th><th>Status</th><th>Devices</th><th>Signed up</th><th>Actions</th></tr></thead>
             <tbody id="users-table"></tbody>
           </table>
         </div>
@@ -65,7 +80,7 @@
       <section id="view-sessions" class="view-panel hidden">
         <div class="table-wrap">
           <table>
-            <thead><tr><th>User ID</th><th>Session created</th><th>Expires</th></tr></thead>
+            <thead><tr><th>User ID</th><th>IP address</th><th>Device</th><th>Session created</th><th>Expires</th></tr></thead>
             <tbody id="sessions-table"></tbody>
           </table>
         </div>
@@ -84,11 +99,13 @@
         <button type="button" id="back-users" class="ghost-btn">← All users</button>
         <h3 id="detail-username">User</h3>
         <p id="detail-meta" class="muted"></p>
+        <div id="detail-ips" class="detail-ips"></div>
+        <div id="detail-actions" class="detail-actions"></div>
         <div id="detail-chats" class="detail-chats"></div>
       </section>
     </main>
   </div>
 
-  <script src="/static/admin.js?v=1"></script>
+  <script src="/static/admin.js?v=2"></script>
 </body>
 </html>

@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS hassan_users (
   username TEXT UNIQUE NOT NULL,
   password_hash TEXT NOT NULL,
   salt TEXT NOT NULL,
+  is_blocked BOOLEAN NOT NULL DEFAULT false,
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
@@ -14,9 +15,19 @@ CREATE TABLE IF NOT EXISTS hassan_sessions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES hassan_users(id) ON DELETE CASCADE,
   token TEXT UNIQUE NOT NULL,
+  ip_address TEXT NOT NULL DEFAULT '',
+  user_agent TEXT NOT NULL DEFAULT '',
   created_at TIMESTAMPTZ DEFAULT now(),
   expires_at TIMESTAMPTZ DEFAULT now() + interval '30 days'
 );
+
+CREATE TABLE IF NOT EXISTS hassan_app_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+
+INSERT INTO hassan_app_settings (key, value) VALUES ('signup_limit', '0')
+ON CONFLICT (key) DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS hassan_conversations (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -54,3 +65,10 @@ CREATE POLICY "allow_delete_conversations" ON hassan_conversations FOR DELETE TO
 CREATE POLICY "allow_insert_messages" ON hassan_messages FOR INSERT TO anon, authenticated WITH CHECK (true);
 CREATE POLICY "allow_select_messages" ON hassan_messages FOR SELECT TO anon, authenticated USING (true);
 CREATE POLICY "allow_delete_messages" ON hassan_messages FOR DELETE TO anon, authenticated USING (true);
+
+-- If tables already exist, run these once:
+-- ALTER TABLE hassan_users ADD COLUMN IF NOT EXISTS is_blocked BOOLEAN NOT NULL DEFAULT false;
+-- ALTER TABLE hassan_sessions ADD COLUMN IF NOT EXISTS ip_address TEXT NOT NULL DEFAULT '';
+-- ALTER TABLE hassan_sessions ADD COLUMN IF NOT EXISTS user_agent TEXT NOT NULL DEFAULT '';
+-- CREATE TABLE IF NOT EXISTS hassan_app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+-- INSERT INTO hassan_app_settings (key, value) VALUES ('signup_limit', '0') ON CONFLICT DO NOTHING;
