@@ -20,13 +20,13 @@ sys.path.insert(0, str(ROOT))
 
 from llm_router import LlmConfig, chat_completion  # noqa: E402
 from hassan_prompt import CHAT_SYSTEM, HASSAN_INTRO  # noqa: E402
-import llm_defaults  # noqa: E402
-import local_auth  # noqa: E402
-import local_store  # noqa: E402
-import supabase_store  # noqa: E402
-import admin_auth  # noqa: E402
-import local_admin  # noqa: E402
-import user_settings  # noqa: E402
+from web import llm_defaults  # noqa: E402
+from web import local_auth  # noqa: E402
+from web import local_store  # noqa: E402
+from web import supabase_store  # noqa: E402
+from web import admin_auth  # noqa: E402
+from web import local_admin  # noqa: E402
+from web import user_settings  # noqa: E402
 
 
 def load_env() -> None:
