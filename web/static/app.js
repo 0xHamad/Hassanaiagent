@@ -179,31 +179,58 @@ async function doSignup() {
 
 // ─── Dashboard init ────────────────────────────────────────────────────────────
 function initDashboard() {
-  loadSessions();
-  renderHistory();
-  bindDashboardEvents();
-  applySavedSettings();
-
-  if (currentUser) {
-    const name = currentUser.username;
-    const el = document.getElementById('sidebar-username');
-    if (el) el.textContent = name;
-    const av = document.getElementById('user-avatar-initials');
-    if (av) av.textContent = name.charAt(0).toUpperCase();
-  }
-
-  userInput.focus();
+  loadSessions().then(() => {
+    renderHistory();
+    bindDashboardEvents();
+    applySavedSettings();
+    if (currentUser) {
+      const name = currentUser.username;
+      const el = document.getElementById('sidebar-username');
+      if (el) el.textContent = name;
+      const av = document.getElementById('user-avatar-initials');
+      if (av) av.textContent = name.charAt(0).toUpperCase();
+    }
+    userInput.focus();
+  });
 }
 
-// ─── Sessions ──────────────────────────────────────────────────────────────────
-function loadSessions() {
-  try { sessions = JSON.parse(localStorage.getItem('hassan_sessions') || '[]'); }
-  catch { sessions = []; }
+// ─── Sessions (Supabase via API) ───────────────────────────────────────────────
+async function loadSessions() {
+  try {
+    const r = await fetch('/api/conversations', { headers: { 'x-token': authToken } });
+    if (!r.ok) throw new Error('api');
+    const data = await r.json();
+    sessions = (data.conversations || []).map(c => ({
+      id: c.id,
+      title: c.title || 'New Chat',
+      preview: c.preview || '',
+      messages: [],
+    }));
+  } catch {
+    try { sessions = JSON.parse(localStorage.getItem('hassan_sessions') || '[]'); }
+    catch { sessions = []; }
+  }
 }
 function persistSessions() {
   localStorage.setItem('hassan_sessions', JSON.stringify(sessions.slice(0, 80)));
 }
-function newSession() {
+async function newSession() {
+  try {
+    const r = await fetch('/api/conversations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-token': authToken },
+      body: JSON.stringify({ title: 'New Chat' }),
+    });
+    if (r.ok) {
+      const conv = await r.json();
+      const sess = { id: conv.id, title: conv.title || 'New Chat', messages: [] };
+      sessions.unshift(sess);
+      activeSession = sess;
+      messages = sess.messages;
+      renderHistory();
+      return sess;
+    }
+  } catch {}
   const id = Date.now().toString();
   const sess = { id, title: 'New Chat', messages: [] };
   sessions.unshift(sess);
@@ -212,11 +239,25 @@ function newSession() {
   persistSessions();
   return sess;
 }
-function openSession(id) {
-  const sess = sessions.find(s => s.id === id);
-  if (!sess) return;
-  activeSession = sess;
-  messages = sess.messages;
+async function openSession(id) {
+  const local = sessions.find(s => s.id === id);
+  if (!local) return;
+  activeSession = local;
+  try {
+    const r = await fetch(`/api/conversations/${encodeURIComponent(id)}`, {
+      headers: { 'x-token': authToken },
+    });
+    if (r.ok) {
+      const data = await r.json();
+      messages = (data.messages || []).map(m => ({ role: m.role, content: m.content }));
+      local.messages = messages;
+      local.title = data.conversation?.title || local.title;
+    } else {
+      messages = local.messages || [];
+    }
+  } catch {
+    messages = local.messages || [];
+  }
   renderHistory();
   renderAllMessages();
   messages.length > 0 ? showChat() : showWelcomeView();
@@ -243,7 +284,7 @@ function renderHistory() {
       <div class="history-check"></div>
       <div class="history-text">
         <div class="history-title">${esc(s.title)}</div>
-        <div class="history-preview">${s.messages.length} message${s.messages.length !== 1 ? 's' : ''}</div>
+        <div class="history-preview">${esc(s.preview || (s.messages.length + ' message' + (s.messages.length !== 1 ? 's' : '')))}</div>
       </div>
     </div>`).join('');
   historyList.querySelectorAll('.history-item').forEach(el => {
@@ -339,7 +380,7 @@ async function sendMessage(text) {
   text = (text || userInput.value).trim();
   if (!text || isLoading) return;
 
-  if (!activeSession) newSession();
+  if (!activeSession) await newSession();
   if (messages.length === 0) updateSessionTitle(activeSession, text);
 
   messages.push({ role: 'user', content: text });
@@ -361,6 +402,7 @@ async function sendMessage(text) {
       headers: { 'Content-Type': 'application/json', 'x-token': authToken },
       body: JSON.stringify({
         messages,
+        conversation_id: activeSession?.id || '',
         provider: settings.provider || '',
         api_key: settings.api_key || '',
         cursor_api_key: settings.cursor_api_key || '',
@@ -372,6 +414,7 @@ async function sendMessage(text) {
     hideTyping();
     if (r.status === 401) { showToast('Session expired — please sign in again.'); doLogout(); return; }
     if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
+    if (data.conversation_id && activeSession) activeSession.id = data.conversation_id;
     messages.push({ role: 'assistant', content: data.reply });
     appendMessage('assistant', data.reply);
     persistSessions();
@@ -423,8 +466,8 @@ function bindDashboardEvents() {
     btn.addEventListener('click', () => sendMessage(btn.dataset.prompt));
   });
 
-  document.getElementById('new-chat-btn').addEventListener('click', () => {
-    newSession(); showWelcomeView(); renderHistory(); userInput.focus();
+  document.getElementById('new-chat-btn').addEventListener('click', async () => {
+    await newSession(); showWelcomeView(); renderHistory(); userInput.focus();
   });
 
   document.getElementById('open-settings')?.addEventListener('click', openSettings);
