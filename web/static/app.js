@@ -9,6 +9,15 @@ let isLoading  = false;
 let currentUser = null;
 let authToken   = localStorage.getItem('hassan_token') || '';
 let settings    = {};
+let pendingAttachments = [];
+let attachSupported = null;
+
+const ATTACH_ICONS = {
+  images: '📷', documents: '📄', code: '💻', config: '📦', spreadsheet: '📊', other: '📎',
+};
+const ATTACH_CLASS = {
+  images: 'img', documents: 'doc', code: 'code', config: 'cfg', spreadsheet: 'sheet', other: 'doc',
+};
 
 const FALLBACK_DEFAULTS = {
   provider: 'gemini',
@@ -55,6 +64,10 @@ const sidebar       = document.getElementById('sidebar');
 const rightPanel    = document.getElementById('right-panel');
 const layoutEl      = document.getElementById('dashboard');
 const mobileBackdrop = document.getElementById('mobile-backdrop');
+const attachTray = document.getElementById('attach-tray');
+const fileInput = document.getElementById('file-input');
+const attachPopover = document.getElementById('attach-popover');
+const inputDropZone = document.getElementById('input-drop-zone');
 const SPLASH_MS = 4000;
 
 // ─── Boot ──────────────────────────────────────────────────────────────────────
@@ -376,10 +389,21 @@ function renderHistory() {
 // ─── Render messages ───────────────────────────────────────────────────────────
 function renderAllMessages() {
   chatMessages.innerHTML = '';
-  messages.forEach(m => appendMessage(m.role, m.content, false));
+  messages.forEach(m => appendMessage(m.role, m.content, false, m.attachments || []));
 }
 
-function appendMessage(role, content, animate = true) {
+function renderAttachmentPills(items) {
+  if (!items?.length) return '';
+  return `<div class="msg-attachments">${items.map(a => {
+    const cat = a.category || guessCategory(a.name);
+    const thumb = a.preview
+      ? `<img src="${a.preview}" alt="" />`
+      : `<span>${ATTACH_ICONS[cat] || '📎'}</span>`;
+    return `<span class="msg-attach-pill">${thumb} ${esc(a.name)}</span>`;
+  }).join('')}</div>`;
+}
+
+function appendMessage(role, content, animate = true, attachments = []) {
   const row = document.createElement('div');
   row.className = `msg-row ${role}`;
   if (!animate) row.style.animation = 'none';
@@ -388,13 +412,13 @@ function appendMessage(role, content, animate = true) {
     ? `<div class="msg-avatar">${currentUser ? currentUser.username.charAt(0).toUpperCase() : 'U'}</div>`
     : `<div class="msg-avatar"><img src="/static/logo.jpg" alt="H" /></div>`;
 
+  const userBody = role === 'user'
+    ? `<div class="msg-bubble">${content ? esc(content).replace(/\n/g, '<br>') : ''}${renderAttachmentPills(attachments)}</div>`
+    : `<div class="kimi-ai-bubble">${renderMD(content)}</div>`;
+
   row.innerHTML = `
     ${avatarHtml}
-    <div class="msg-content">
-      ${role === 'user'
-        ? `<div class="msg-bubble">${esc(content)}</div>`
-        : `<div class="kimi-ai-bubble">${renderMD(content)}</div>`}
-    </div>`;
+    <div class="msg-content">${userBody}</div>`;
   chatMessages.appendChild(row);
   addCopyButtons(row);
   chatMessages.scrollTop = chatMessages.scrollHeight;
@@ -456,20 +480,231 @@ function showTyping() {
 }
 function hideTyping() { if (typingRow) { typingRow.remove(); typingRow = null; } }
 
+// ─── File attachments ─────────────────────────────────────────────────────────
+function fmtFileSize(n) {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function guessCategory(name) {
+  const low = (name || '').toLowerCase();
+  const dot = low.lastIndexOf('.');
+  const ext = dot >= 0 ? low.slice(dot) : low;
+  const cats = attachSupported?.categories || {};
+  for (const [cat, exts] of Object.entries(cats)) {
+    if (exts.includes(ext) || exts.includes(low.split('/').pop())) return cat;
+  }
+  if (['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.heic', '.heif'].includes(ext)) return 'images';
+  return 'other';
+}
+
+function isFileAllowed(name) {
+  const low = (name || '').toLowerCase();
+  const base = low.split(/[/\\]/).pop();
+  const specials = new Set([
+    'docker-compose.yml', 'dockerfile', 'package.json', 'package-lock.json',
+    'requirements.txt', 'pyproject.toml', 'cargo.toml', 'go.mod', 'composer.json',
+    '.env', '.env.example',
+  ]);
+  if (specials.has(base)) return true;
+  const dot = base.lastIndexOf('.');
+  const ext = dot >= 0 ? base.slice(dot) : '';
+  const all = new Set();
+  Object.values(attachSupported?.categories || {}).forEach(arr => arr.forEach(e => all.add(e)));
+  return all.has(ext);
+}
+
+async function loadAttachSupported() {
+  try {
+    const r = await fetch('/api/attachments/supported');
+    if (r.ok) attachSupported = await r.json();
+  } catch {}
+  if (!attachSupported) {
+    attachSupported = {
+      max_files: 8, max_file_mb: 5,
+      accept: '.jpg,.jpeg,.png,.webp,.pdf,.txt,.md,.py,.js,.json,.csv,.env',
+      categories: {
+        images: ['.jpg', '.jpeg', '.png', '.webp', '.gif'],
+        documents: ['.pdf', '.txt', '.md', '.json', '.csv'],
+        code: ['.py', '.js', '.ts', '.html', '.css'],
+        config: ['.env', 'package.json', 'requirements.txt'],
+        spreadsheet: ['.csv', '.xlsx'],
+      },
+    };
+  }
+  if (fileInput && attachSupported.accept) fileInput.accept = attachSupported.accept;
+  renderAttachCategories();
+}
+
+function renderAttachCategories() {
+  const box = document.getElementById('attach-categories');
+  if (!box || !attachSupported?.categories) return;
+  const labels = {
+    images: 'Images',
+    documents: 'Documents',
+    code: 'Code Files',
+    config: 'Config Files',
+    spreadsheet: 'Spreadsheet',
+  };
+  box.innerHTML = Object.entries(attachSupported.categories).map(([key, exts]) => `
+    <div class="attach-cat">
+      <div class="attach-cat-title">${ATTACH_ICONS[key] || '📎'} ${labels[key] || key}</div>
+      <div class="attach-cat-exts">${exts.join(' · ')}</div>
+    </div>`).join('');
+}
+
+function toggleAttachPopover(force) {
+  if (!attachPopover) return;
+  const open = force !== undefined ? force : attachPopover.classList.contains('hidden');
+  attachPopover.classList.toggle('hidden', !open);
+}
+
+function clearPendingAttachments() {
+  pendingAttachments = [];
+  renderAttachTray();
+  updateSendBtn();
+}
+
+function renderAttachTray() {
+  if (!attachTray) return;
+  if (!pendingAttachments.length) {
+    attachTray.classList.add('hidden');
+    attachTray.innerHTML = '';
+    return;
+  }
+  attachTray.classList.remove('hidden');
+  attachTray.innerHTML = pendingAttachments.map((a, i) => {
+    const cat = a.category || guessCategory(a.name);
+    return `
+    <div class="attach-chip" data-idx="${i}">
+      <div class="attach-chip-icon ${ATTACH_CLASS[cat] || 'doc'}">${ATTACH_ICONS[cat] || '📎'}</div>
+      <div class="attach-chip-meta">
+        <span class="attach-chip-name" title="${esc(a.name)}">${esc(a.name)}</span>
+        <span class="attach-chip-size">${fmtFileSize(a.size)}</span>
+      </div>
+      <button type="button" class="attach-chip-remove" data-remove="${i}" aria-label="Remove">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+        </svg>
+      </button>
+    </div>`;
+  }).join('');
+  attachTray.querySelectorAll('[data-remove]').forEach(btn => {
+    btn.onclick = () => {
+      pendingAttachments.splice(Number(btn.dataset.remove), 1);
+      renderAttachTray();
+      updateSendBtn();
+    };
+  });
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error(`Could not read ${file.name}`));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function addFilesFromList(fileList) {
+  const maxFiles = attachSupported?.max_files || 8;
+  const maxBytes = (attachSupported?.max_file_mb || 5) * 1024 * 1024;
+  const files = Array.from(fileList || []);
+  if (!files.length) return;
+
+  for (const file of files) {
+    if (pendingAttachments.length >= maxFiles) {
+      showToast(`Maximum ${maxFiles} files per message`);
+      break;
+    }
+    if (!isFileAllowed(file.name)) {
+      showToast(`Unsupported file: ${file.name}`);
+      continue;
+    }
+    if (file.size > maxBytes) {
+      showToast(`${file.name} exceeds ${attachSupported?.max_file_mb || 5}MB`);
+      continue;
+    }
+    if (pendingAttachments.some(a => a.name === file.name && a.size === file.size)) continue;
+    try {
+      const dataUrl = await readFileAsDataUrl(file);
+      const cat = guessCategory(file.name);
+      const item = {
+        name: file.name,
+        size: file.size,
+        category: cat,
+        data: dataUrl,
+        preview: cat === 'images' ? dataUrl : '',
+      };
+      pendingAttachments.push(item);
+    } catch (e) {
+      showToast(e.message);
+    }
+  }
+  renderAttachTray();
+  updateSendBtn();
+  toggleAttachPopover(false);
+}
+
+function initAttachments() {
+  loadAttachSupported();
+
+  document.getElementById('attach-btn')?.addEventListener('click', () => toggleAttachPopover());
+  document.getElementById('attach-tool-btn')?.addEventListener('click', () => toggleAttachPopover());
+  document.getElementById('close-attach-popover')?.addEventListener('click', () => toggleAttachPopover(false));
+  document.getElementById('pick-files-btn')?.addEventListener('click', () => fileInput?.click());
+  fileInput?.addEventListener('change', () => {
+    addFilesFromList(fileInput.files);
+    fileInput.value = '';
+  });
+
+  if (inputDropZone) {
+    ['dragenter', 'dragover'].forEach(ev => {
+      inputDropZone.addEventListener(ev, e => {
+        e.preventDefault();
+        inputDropZone.classList.add('drag-over');
+      });
+    });
+    ['dragleave', 'drop'].forEach(ev => {
+      inputDropZone.addEventListener(ev, e => {
+        e.preventDefault();
+        if (ev === 'dragleave') inputDropZone.classList.remove('drag-over');
+      });
+    });
+    inputDropZone.addEventListener('drop', e => {
+      inputDropZone.classList.remove('drag-over');
+      addFilesFromList(e.dataTransfer?.files);
+    });
+  }
+
+  document.addEventListener('click', e => {
+    if (!attachPopover || attachPopover.classList.contains('hidden')) return;
+    if (e.target.closest('#attach-popover') || e.target.closest('#attach-btn') || e.target.closest('#attach-tool-btn')) return;
+    toggleAttachPopover(false);
+  });
+}
+
 // ─── Send message ──────────────────────────────────────────────────────────────
 async function sendMessage(text) {
   text = (text || userInput.value).trim();
-  if (!text || isLoading) return;
+  const files = pendingAttachments.slice();
+  if ((!text && !files.length) || isLoading) return;
 
   if (!activeSession) await newSession();
-  if (messages.length === 0) updateSessionTitle(activeSession, text);
+  if (messages.length === 0) updateSessionTitle(activeSession, text || files[0]?.name || 'Attachment');
 
-  messages.push({ role: 'user', content: text });
+  const sentAttachments = files.map(f => ({
+    name: f.name, size: f.size, category: f.category, preview: f.preview || '',
+  }));
+  messages.push({ role: 'user', content: text, attachments: sentAttachments });
   showChat();
-  appendMessage('user', text);
+  appendMessage('user', text, true, sentAttachments);
   userInput.value = '';
   userInput.style.height = 'auto';
   if (charCount) charCount.textContent = '0';
+  clearPendingAttachments();
   updateSendBtn();
   renderHistory();
 
@@ -477,19 +712,22 @@ async function sendMessage(text) {
   setLoading(true);
   showTyping();
 
+  const payload = {
+    message: text,
+    conversation_id: activeSession?.id || '',
+    attachments: files.map(f => ({ name: f.name, data: f.data, size: f.size })),
+    provider: settings.provider || '',
+    api_key: settings.api_key || '',
+    cursor_api_key: settings.cursor_api_key || '',
+    model: settings.model || '',
+    base_url: settings.base_url || '',
+  };
+
   try {
     const r = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-token': authToken },
-      body: JSON.stringify({
-        message: text,
-        conversation_id: activeSession?.id || '',
-        provider: settings.provider || '',
-        api_key: settings.api_key || '',
-        cursor_api_key: settings.cursor_api_key || '',
-        model: settings.model || '',
-        base_url: settings.base_url || '',
-      }),
+      body: JSON.stringify(payload),
     });
     const data = await r.json();
     hideTyping();
@@ -512,9 +750,11 @@ async function sendMessage(text) {
 function setLoading(on) {
   sendBtn.classList.toggle('loading', on);
   userInput.disabled = on;
+  document.getElementById('attach-btn')?.toggleAttribute('disabled', on);
 }
 function updateSendBtn() {
-  sendBtn.classList.toggle('active', userInput.value.trim().length > 0);
+  const ready = userInput.value.trim().length > 0 || pendingAttachments.length > 0;
+  sendBtn.classList.toggle('active', ready);
 }
 
 // ─── Mobile / panel toggles ────────────────────────────────────────────────────
@@ -588,6 +828,7 @@ function resetChatState() {
   messages = [];
   sessions = [];
   activeSession = null;
+  clearPendingAttachments();
   if (chatMessages) chatMessages.innerHTML = '';
   localStorage.removeItem('hassan_sessions');
 }
@@ -621,6 +862,8 @@ function bindDashboardEvents() {
   });
   userInput.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
   sendBtn.addEventListener('click', () => sendMessage());
+
+  initAttachments();
 
   document.querySelectorAll('.quick-card').forEach(btn => {
     btn.addEventListener('click', () => sendMessage(btn.dataset.prompt));

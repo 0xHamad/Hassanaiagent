@@ -155,18 +155,34 @@ def _chat_gemini_native(
     system: str = "",
     temperature: float = 0.2,
     max_tokens: int = 8192,
+    images: list[dict[str, str]] | None = None,
 ) -> str:
     model = normalize_gemini_model(model)
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
     contents: list[dict] = []
+    user_msgs = [m for m in messages if m.get("role") == "user" and (m.get("content") or "").strip()]
+    last_user_idx = len(user_msgs) - 1
+
+    msg_idx = 0
     for m in messages:
         role = m.get("role")
         text = (m.get("content") or "").strip()
         if role in (None, "system") or not text:
             continue
         gemini_role = "user" if role == "user" else "model"
-        contents.append({"role": gemini_role, "parts": [{"text": text}]})
+        parts: list[dict] = [{"text": text}]
+        if role == "user" and images and msg_idx == last_user_idx:
+            for img in images:
+                parts.append({
+                    "inline_data": {
+                        "mime_type": img.get("mime") or "image/jpeg",
+                        "data": img.get("data") or "",
+                    }
+                })
+        contents.append({"role": gemini_role, "parts": parts})
+        if role == "user":
+            msg_idx += 1
 
     if not contents:
         contents = [{"role": "user", "parts": [{"text": "Hello"}]}]
@@ -215,6 +231,7 @@ def _chat_gemini(
     base_url: str = "",
     temperature: float = 0.2,
     max_tokens: int = 8192,
+    images: list[dict[str, str]] | None = None,
 ) -> str:
     """Try native Gemini API first; fallback models on 400/404."""
     last_err: RuntimeError | None = None
@@ -222,7 +239,7 @@ def _chat_gemini(
         try:
             return _chat_gemini_native(
                 api_key, mid, messages, system=system,
-                temperature=temperature, max_tokens=max_tokens,
+                temperature=temperature, max_tokens=max_tokens, images=images,
             )
         except RuntimeError as e:
             msg = str(e)
@@ -392,6 +409,7 @@ def chat_completion(
     *,
     system: str = CHAT_SYSTEM,
     temperature: float = 0.3,
+    images: list[dict[str, str]] | None = None,
 ) -> str:
     """Multi-turn chat. messages: [{role, content}, ...] user/assistant only."""
     cfg = config or LlmConfig(
@@ -427,7 +445,7 @@ def chat_completion(
     if provider == "gemini":
         return _chat_gemini(
             api_key, model, trimmed, system=system,
-            base_url=base, temperature=temperature,
+            base_url=base, temperature=temperature, images=images,
         )
 
     openai_messages = [{"role": "system", "content": system}, *trimmed]

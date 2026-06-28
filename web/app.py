@@ -27,6 +27,7 @@ from web import supabase_store  # noqa: E402
 from web import admin_auth  # noqa: E402
 from web import local_admin  # noqa: E402
 from web import user_settings  # noqa: E402
+from web import file_attachments  # noqa: E402
 
 
 def load_env() -> None:
@@ -252,9 +253,16 @@ class AuthRequest(BaseModel):
     password: str
 
 
+class AttachmentIn(BaseModel):
+    name: str = ""
+    data: str = ""
+    size: int = 0
+
+
 class ChatRequest(BaseModel):
     message: str = ""
     messages: list[dict] = Field(default_factory=list)  # legacy — history loaded server-side
+    attachments: list[AttachmentIn] = Field(default_factory=list)
     conversation_id: str = ""
     provider: str = ""
     api_key: str = ""
@@ -727,8 +735,25 @@ async def chat(
     user = _require_auth(x_token)
     conv_id = (req.conversation_id or "").strip()
     user_text = (req.message or "").strip()
-    if not user_text:
+
+    processed_attachments: list[dict] = []
+    if req.attachments:
+        try:
+            processed_attachments = file_attachments.process_many(
+                [a.model_dump() for a in req.attachments]
+            )
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+
+    if not user_text and not processed_attachments:
         raise HTTPException(400, "Empty message")
+
+    display_text = user_text
+    if processed_attachments:
+        attach_line = file_attachments.summary_for_display(processed_attachments)
+        display_text = f"{user_text}\n\n{attach_line}".strip() if user_text else attach_line
+
+    title_seed = user_text or (processed_attachments[0]["name"] if processed_attachments else "New Chat")
 
     if USE_CLOUD:
         if conv_id:
@@ -740,8 +765,8 @@ async def chat(
             conv = supabase_store.create_conversation(_sb_insert, str(user["id"]))
             conv_id = conv["id"]
         if conv.get("title") in ("New Chat", ""):
-            supabase_store.rename_conversation(_sb_patch, conv_id, user_text[:60])
-        supabase_store.add_message(_sb_insert, _sb_patch, conv_id, "user", user_text)
+            supabase_store.rename_conversation(_sb_patch, conv_id, title_seed[:60])
+        supabase_store.add_message(_sb_insert, _sb_patch, conv_id, "user", display_text)
         db_msgs = supabase_store.list_messages(_sb_get, conv_id)
     else:
         if conv_id:
@@ -753,17 +778,21 @@ async def chat(
             conv = local_store.create_conversation(str(user["id"]))
             conv_id = str(conv["id"])
         if conv.get("title") in ("New Chat", ""):
-            local_store.rename_conversation(conv_id, user_text[:60])
-        local_store.add_message(conv_id, "user", user_text)
+            local_store.rename_conversation(conv_id, title_seed[:60])
+        local_store.add_message(conv_id, "user", display_text)
         db_msgs = local_store.list_messages(conv_id)
+
+    llm_user_text, gemini_images = file_attachments.build_llm_context(user_text, processed_attachments)
 
     max_ctx = int(os.getenv("CHAT_CONTEXT_MESSAGES", "40"))
     llm_messages = [
         {"role": m["role"], "content": m["content"]}
         for m in db_msgs[-max_ctx:]
     ]
+    if llm_messages and llm_messages[-1]["role"] == "user":
+        llm_messages[-1]["content"] = llm_user_text
 
-    if llm_defaults.is_simple_greeting(user_text):
+    if not processed_attachments and llm_defaults.is_simple_greeting(user_text):
         reply = llm_defaults.greeting_reply()
         if USE_CLOUD:
             supabase_store.add_message(_sb_insert, _sb_patch, conv_id, "assistant", reply)
@@ -771,7 +800,7 @@ async def chat(
             local_store.add_message(conv_id, "assistant", reply)
         return {"reply": reply, "conversation_id": conv_id}
 
-    if llm_defaults.needs_clarification(user_text):
+    if not processed_attachments and llm_defaults.needs_clarification(user_text):
         reply = llm_defaults.clarification_reply()
         if USE_CLOUD:
             supabase_store.add_message(_sb_insert, _sb_patch, conv_id, "assistant", reply)
@@ -810,7 +839,12 @@ async def chat(
         )
 
     try:
-        reply = chat_completion(llm_messages, cfg, system=CHAT_SYSTEM)
+        reply = chat_completion(
+            llm_messages,
+            cfg,
+            system=CHAT_SYSTEM,
+            images=gemini_images if provider == "gemini" and gemini_images else None,
+        )
         if USE_CLOUD:
             supabase_store.add_message(_sb_insert, _sb_patch, conv_id, "assistant", reply)
         else:
@@ -820,6 +854,11 @@ async def chat(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
+
+
+@app.get("/api/attachments/supported")
+async def attachments_supported():
+    return file_attachments.supported_payload()
 
 
 @app.get("/api/env-config")
