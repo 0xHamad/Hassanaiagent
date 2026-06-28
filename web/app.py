@@ -206,15 +206,29 @@ def _probe_supabase() -> tuple[bool, str]:
 SUPABASE_READY, SUPABASE_PROBE_ERROR = _probe_supabase()
 USE_CLOUD = USE_SUPABASE and SUPABASE_READY
 
-_want_cloud = bool(SUPABASE_URL) or os.getenv("REQUIRE_SUPABASE", "").strip().lower() in ("1", "true", "yes")
-if _want_cloud and not USE_CLOUD:
+# Hard-fail only when keys look present but broken, or REQUIRE_SUPABASE=1
+_require = os.getenv("REQUIRE_SUPABASE", "").strip().lower() in ("1", "true", "yes")
+if SUPABASE_URL and SUPABASE_SERVICE_KEY and not _looks_like_jwt(SUPABASE_SERVICE_KEY):
+    raise RuntimeError(
+        "SUPABASE_SERVICE_ROLE_KEY is truncated or invalid. "
+        "Paste the full JWT on one line in /root/hassanaiagent/.env (no > at end). "
+        f"Detail: {SUPABASE_PROBE_ERROR}"
+    )
+if _require and not USE_CLOUD:
     reason = SUPABASE_PROBE_ERROR or "Supabase tables missing — run supabase/setup_all.sql"
-    raise RuntimeError(f"Supabase required for chat memory but unavailable: {reason}")
+    raise RuntimeError(f"REQUIRE_SUPABASE=1 but cloud storage unavailable: {reason}")
 
 if not USE_CLOUD:
     local_auth.init_db()
     local_store.init_chat_db()
-    print("[Hassan AI] Chat memory: local SQLite (dev only — set SUPABASE_URL for production)", flush=True)
+    if SUPABASE_URL:
+        print(
+            f"[Hassan AI] WARNING: Supabase not ready ({SUPABASE_PROBE_ERROR}). "
+            "Using local SQLite until you paste full keys in .env and restart.",
+            flush=True,
+        )
+    else:
+        print("[Hassan AI] Chat memory: local SQLite (dev — set Supabase keys for production)", flush=True)
 else:
     print(f"[Hassan AI] Chat memory: Supabase ({SUPABASE_URL})", flush=True)
 
