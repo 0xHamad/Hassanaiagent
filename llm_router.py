@@ -41,6 +41,19 @@ Rules:
 
 from hassan_prompt import CHAT_SYSTEM, HASSAN_INTRO  # noqa: F401
 
+try:
+    from web.models_catalog import DEFAULT_GEMINI_MODEL
+except ImportError:
+    DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite"
+
+GEMINI_MODEL_FALLBACKS = (
+    "gemini-3.1-flash-lite",
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+    "gemini-2.0-flash",
+)
+_GEMINI_ID_RE = re.compile(r"^gemini-[a-z0-9][a-z0-9.-]*$", re.I)
+
 SYSTEM = ANALYSIS_SYSTEM  # backward compat
 
 
@@ -74,7 +87,7 @@ class LlmConfig:
             "deepseek": ("", model or "deepseek-chat", "https://api.deepseek.com/v1"),
             "openrouter": ("", model or "anthropic/claude-sonnet-4", "https://openrouter.ai/api/v1"),
             "ollama": ("ollama", model or "llama3.2", "http://127.0.0.1:11434/v1"),
-            "gemini": ("", model or "gemini-2.5-flash", "https://generativelanguage.googleapis.com/v1beta/openai/"),
+            "gemini": ("", model or DEFAULT_GEMINI_MODEL, "https://generativelanguage.googleapis.com/v1beta/openai/"),
             "antigravity": ("sk-antigravity", model or "gemini-3-flash", "http://127.0.0.1:8045/v1"),
             "cursor": ("", model or "composer-2.5", "https://api.cursor.com/v1"),
         }
@@ -111,6 +124,117 @@ def _extract_json(text: str) -> dict[str, Any]:
     if m:
         return json.loads(m.group(0))
     raise ValueError("LLM did not return JSON")
+
+
+def normalize_gemini_model(model: str) -> str:
+    """Clean model id for Gemini API (strip junk, remove models/ prefix)."""
+    m = (model or "").strip()
+    for prefix in ("models/", "google/", "gemini:"):
+        if m.lower().startswith(prefix):
+            m = m[len(prefix):]
+    m = m.strip()
+    if not m or " " in m or not _GEMINI_ID_RE.match(m):
+        return DEFAULT_GEMINI_MODEL
+    return m.lower()
+
+
+def _gemini_models_to_try(model: str) -> list[str]:
+    primary = normalize_gemini_model(model)
+    out = [primary]
+    for mid in GEMINI_MODEL_FALLBACKS:
+        if mid not in out:
+            out.append(mid)
+    return out
+
+
+def _chat_gemini_native(
+    api_key: str,
+    model: str,
+    messages: list[dict[str, str]],
+    *,
+    system: str = "",
+    temperature: float = 0.2,
+    max_tokens: int = 8192,
+) -> str:
+    model = normalize_gemini_model(model)
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+
+    contents: list[dict] = []
+    for m in messages:
+        role = m.get("role")
+        text = (m.get("content") or "").strip()
+        if role in (None, "system") or not text:
+            continue
+        gemini_role = "user" if role == "user" else "model"
+        contents.append({"role": gemini_role, "parts": [{"text": text}]})
+
+    if not contents:
+        contents = [{"role": "user", "parts": [{"text": "Hello"}]}]
+    if contents[0]["role"] != "user":
+        contents.insert(0, {"role": "user", "parts": [{"text": "Continue."}]})
+
+    body: dict[str, Any] = {
+        "contents": contents,
+        "generationConfig": {
+            "temperature": temperature,
+            "maxOutputTokens": max_tokens,
+        },
+    }
+    if system.strip():
+        body["systemInstruction"] = {"parts": [{"text": system.strip()}]}
+
+    try:
+        r = requests.post(url, params={"key": api_key}, json=body, timeout=180)
+    except requests.Timeout as e:
+        raise RuntimeError("Gemini API timeout (180s).") from e
+    except requests.ConnectionError as e:
+        raise RuntimeError(f"Gemini connection failed: {e}") from e
+
+    if not r.ok:
+        body_txt = (r.text or "")[:600]
+        if r.status_code == 401:
+            raise RuntimeError(f"Invalid Gemini API key (401).\n{body_txt}")
+        if r.status_code == 429:
+            raise RuntimeError(f"Gemini rate limit (429) — thori der baad try karo.\n{body_txt}")
+        raise RuntimeError(f"Gemini API error {r.status_code} [{model}]: {body_txt}")
+
+    try:
+        data = r.json()
+        parts = data["candidates"][0]["content"]["parts"]
+        return "".join(p.get("text", "") for p in parts).strip() or "(empty response)"
+    except (KeyError, IndexError, TypeError, ValueError) as e:
+        raise RuntimeError(f"Unexpected Gemini response: {(r.text or '')[:400]}") from e
+
+
+def _chat_gemini(
+    api_key: str,
+    model: str,
+    messages: list[dict[str, str]],
+    *,
+    system: str = "",
+    base_url: str = "",
+    temperature: float = 0.2,
+    max_tokens: int = 8192,
+) -> str:
+    """Try native Gemini API first; fallback models on 400/404."""
+    last_err: RuntimeError | None = None
+    for mid in _gemini_models_to_try(model):
+        try:
+            return _chat_gemini_native(
+                api_key, mid, messages, system=system,
+                temperature=temperature, max_tokens=max_tokens,
+            )
+        except RuntimeError as e:
+            msg = str(e)
+            if any(x in msg for x in ("400", "404", "not found", "INVALID_ARGUMENT", "unexpected model")):
+                last_err = e
+                continue
+            raise
+    if last_err:
+        raise RuntimeError(
+            f"Gemini model fail ho gaya. Settings → Model = gemini-2.5-flash try karo.\n{last_err}"
+        ) from last_err
+    raise RuntimeError("Gemini request failed.")
 
 
 def _chat_openai_compat(
@@ -300,6 +424,12 @@ def chat_completion(
     if provider == "anthropic":
         return _chat_anthropic(api_key, model, trimmed, system=system, temperature=temperature)
 
+    if provider == "gemini":
+        return _chat_gemini(
+            api_key, model, trimmed, system=system,
+            base_url=base, temperature=temperature,
+        )
+
     openai_messages = [{"role": "system", "content": system}, *trimmed]
     return _chat_openai_compat(base, api_key, model, openai_messages, temperature=temperature)
 
@@ -348,6 +478,8 @@ def analyze_with_llm(recon_dict: dict, *, user_notes: str = "", config: LlmConfi
         ]
         if provider == "anthropic":
             raw = _chat_anthropic(api_key, model, [messages[1]], system=ANALYSIS_SYSTEM)
+        elif provider == "gemini":
+            raw = _chat_gemini(api_key, model, [messages[1]], system=ANALYSIS_SYSTEM)
         else:
             raw = _chat_openai_compat(base, api_key, model, messages)
     else:
@@ -355,6 +487,8 @@ def analyze_with_llm(recon_dict: dict, *, user_notes: str = "", config: LlmConfi
         messages = [{"role": "system", "content": ANALYSIS_SYSTEM}, {"role": "user", "content": user}]
         if provider == "anthropic":
             raw = _chat_anthropic(api_key, model, [messages[1]], system=ANALYSIS_SYSTEM)
+        elif provider == "gemini":
+            raw = _chat_gemini(api_key, model, [messages[1]], system=ANALYSIS_SYSTEM)
         else:
             raw = _chat_openai_compat(base, api_key, model, messages)
 

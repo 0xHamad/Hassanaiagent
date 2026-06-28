@@ -895,6 +895,7 @@ textarea#user-input::-webkit-scrollbar { width: 0; }
 .gemini-guide.open { display: block; }
 .gemini-guide a { color: #1d4ed8; font-weight: 600; text-decoration: underline; }
 .gemini-guide code { background: rgba(255,255,255,.7); padding: 1px 5px; border-radius: 4px; font-size: 11px; }
+.model-custom-input { margin-top: 8px; width: 100%; }
 
 /* ─── Toast ──────────────────────────────────────────────────────────────────── */
 .toast {

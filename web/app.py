@@ -442,6 +442,13 @@ async def api_default_settings():
     }
 
 
+@app.get("/api/models")
+async def api_models(provider: str | None = None):
+    from web.models_catalog import api_payload
+
+    return api_payload(provider)
+
+
 @app.get("/api/intro")
 async def intro():
     return {"intro": HASSAN_INTRO}
@@ -727,6 +734,10 @@ async def chat(
 
     provider = (req.provider or llm_defaults.default_provider()).strip().lower()
     model = (req.model or llm_defaults.default_model(provider)).strip()
+    if provider == "gemini" and model:
+        from llm_router import normalize_gemini_model
+
+        model = normalize_gemini_model(model)
     base_url = (req.base_url or llm_defaults.default_base_url(provider)).strip()
 
     cfg = LlmConfig(

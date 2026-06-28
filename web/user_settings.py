@@ -12,7 +12,7 @@ DEFAULTS: dict[str, str] = {
     "provider": "gemini",
     "api_key": "",
     "cursor_api_key": "",
-    "model": "gemini-2.5-flash",
+    "model": "gemini-3.1-flash-lite",
     "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
     "theme": "light",
 }
@@ -46,11 +46,21 @@ def _ensure_schema() -> None:
 def _row_to_dict(row) -> dict[str, Any]:
     if not row:
         return dict(DEFAULTS)
+    model = row["model"] or DEFAULTS["model"]
+    # Legacy auto-default → latest free Gemini
+    if (row["provider"] or DEFAULTS["provider"]) == "gemini" and model in (
+        "",
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-lite",
+        "gemini-2.0-flash",
+        "gemini-2.0-flash-lite",
+    ):
+        model = DEFAULTS["model"]
     return {
         "provider": row["provider"] or DEFAULTS["provider"],
         "api_key": row["api_key"] or "",
         "cursor_api_key": row["cursor_api_key"] or "",
-        "model": row["model"] or DEFAULTS["model"],
+        "model": model,
         "base_url": row["base_url"] or DEFAULTS["base_url"],
         "theme": row["theme"] or "light",
     }
@@ -74,9 +84,13 @@ def get_settings(user_id: str | int) -> dict[str, Any]:
 def save_settings(user_id: str | int, data: dict[str, Any]) -> dict[str, Any]:
     from datetime import datetime, timezone
 
+    from llm_router import normalize_gemini_model
+
     _ensure_schema()
     uid = str(user_id)
     merged = {**DEFAULTS, **{k: str(data.get(k, "") or "") for k in DEFAULTS}}
+    if merged.get("provider") == "gemini" and merged.get("model"):
+        merged["model"] = normalize_gemini_model(merged["model"])
     now = datetime.now(timezone.utc).isoformat()
     conn = sqlite3.connect(DB_PATH)
     try:

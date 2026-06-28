@@ -404,7 +404,7 @@
       <div class="field-group">
         <label>LLM Provider</label>
         <select id="set-provider">
-          <option value="gemini">Gemini Free (Google) — Recommended</option>
+          <option value="gemini">Gemini Free — 3.1 Flash Lite (Recommended)</option>
           <option value="deepseek">DeepSeek</option>
           <option value="anthropic">Anthropic (Claude)</option>
           <option value="openai">OpenAI</option>
@@ -429,8 +429,9 @@
         <input type="password" id="set-cursor-key" placeholder="cursor-..." />
       </div>
       <div class="field-group">
-        <label>Model <span class="label-hint">(leave blank for default)</span></label>
-        <input type="text" id="set-model" placeholder="gemini-2.5-flash" />
+        <label>Model <span class="label-hint">(select to enable — saved per account)</span></label>
+        <select id="set-model"></select>
+        <input type="text" id="set-model-custom" class="model-custom-input" placeholder="Custom model ID…" style="display:none;" />
       </div>
       <div class="field-group">
         <label>Base URL <span class="label-hint">(Gemini default auto)</span></label>

@@ -6,6 +6,7 @@ import os
 import re
 
 from hassan_prompt import HASSAN_GREETING
+from web.models_catalog import DEFAULT_GEMINI_MODEL, default_model_for
 
 GREETING_WORDS = frozenset({
     "h", "hi", "hey", "hello", "yo", "salam", "aoa", "assalam", "assalamu",
@@ -34,9 +35,15 @@ def default_provider() -> str:
 
 def default_model(provider: str | None = None) -> str:
     p = (provider or default_provider()).lower()
+    env = os.getenv("BUILDER_MODEL", "").strip()
+    if env:
+        return env
+    cat_default = default_model_for(p)
+    if cat_default:
+        return cat_default
     if p == "gemini":
-        return os.getenv("BUILDER_MODEL", "gemini-2.5-flash").strip() or "gemini-2.5-flash"
-    return os.getenv("BUILDER_MODEL", "").strip()
+        return DEFAULT_GEMINI_MODEL
+    return default_model_for(p) or ""
 
 
 def default_base_url(provider: str | None = None) -> str:

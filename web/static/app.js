@@ -12,9 +12,31 @@ let settings    = {};
 
 const FALLBACK_DEFAULTS = {
   provider: 'gemini',
-  model: 'gemini-2.5-flash',
+  model: 'gemini-3.1-flash-lite',
   base_url: 'https://generativelanguage.googleapis.com/v1beta/openai/',
 };
+
+const GEMINI_DEFAULT = 'gemini-3.1-flash-lite';
+const GEMINI_LEGACY = new Set([
+  '', 'gemini-2.5-flash', 'gemini-2.5-flash-lite',
+  'gemini-2.0-flash', 'gemini-2.0-flash-lite',
+]);
+
+let modelsCatalog = null;
+
+function providerDefaultModel(provider) {
+  const cat = modelsCatalog?.[provider];
+  if (cat?.default) return cat.default;
+  if (provider === 'gemini') return GEMINI_DEFAULT;
+  return FALLBACK_DEFAULTS.model;
+}
+
+function resolveModelForProvider(provider, savedModel) {
+  const def = providerDefaultModel(provider);
+  if (provider === 'gemini' && GEMINI_LEGACY.has(savedModel || '')) return def;
+  if (!savedModel) return def;
+  return savedModel;
+}
 
 // ─── DOM refs ──────────────────────────────────────────────────────────────────
 const splash        = document.getElementById('splash');
@@ -45,6 +67,7 @@ function clearSplashFallback() {
 
 async function finishBoot() {
   try {
+    await loadModelsCatalog();
     if (splash) splash.classList.add('fade-out');
     await sleep(400);
     if (splash) splash.style.display = 'none';
@@ -597,7 +620,12 @@ function bindDashboardEvents() {
   document.getElementById('close-settings').addEventListener('click', closeSettings);
   settingsModal.addEventListener('click', e => { if (e.target === settingsModal) closeSettings(); });
   document.getElementById('save-settings').addEventListener('click', doSaveSettings);
-  document.getElementById('set-provider')?.addEventListener('change', updateSettingsUI);
+  document.getElementById('set-provider')?.addEventListener('change', () => {
+    updateSettingsUI();
+    const provider = document.getElementById('set-provider')?.value || FALLBACK_DEFAULTS.provider;
+    populateModelSelect(provider, providerDefaultModel(provider));
+  });
+  document.getElementById('set-model')?.addEventListener('change', onModelSelectChange);
 
   document.getElementById('logout-btn')?.addEventListener('click', doLogout);
 
@@ -641,6 +669,87 @@ function bindDashboardEvents() {
 }
 
 // ─── Settings ──────────────────────────────────────────────────────────────────
+async function loadModelsCatalog() {
+  if (modelsCatalog) return modelsCatalog;
+  try {
+    const r = await fetch('/api/models');
+    if (r.ok) {
+      const data = await r.json();
+      modelsCatalog = data.providers || data;
+    }
+  } catch {}
+  return modelsCatalog;
+}
+
+function populateModelSelect(provider, selectedModel) {
+  const sel = document.getElementById('set-model');
+  const custom = document.getElementById('set-model-custom');
+  if (!sel) return;
+
+  const cat = modelsCatalog?.[provider];
+  sel.innerHTML = '';
+
+  if (!cat?.categories?.length) {
+    const want = resolveModelForProvider(provider, selectedModel);
+    const opt = document.createElement('option');
+    opt.value = want;
+    opt.textContent = want;
+    sel.appendChild(opt);
+    if (custom) custom.style.display = 'none';
+    return;
+  }
+
+  const allIds = [];
+  for (const group of cat.categories) {
+    const og = document.createElement('optgroup');
+    og.label = group.label || 'Models';
+    for (const m of group.models || []) {
+      allIds.push(m.id);
+      const opt = document.createElement('option');
+      opt.value = m.id;
+      opt.textContent = m.badge ? `${m.name} — ${m.badge}` : m.name;
+      if (m.id === cat.default) opt.dataset.recommended = '1';
+      og.appendChild(opt);
+    }
+    sel.appendChild(og);
+  }
+
+  const customOpt = document.createElement('option');
+  customOpt.value = '__custom__';
+  customOpt.textContent = 'Custom model ID…';
+  sel.appendChild(customOpt);
+
+  const want = resolveModelForProvider(provider, selectedModel);
+  if (allIds.includes(want)) {
+    sel.value = want;
+    if (custom) { custom.style.display = 'none'; custom.value = ''; }
+  } else if (want && want !== providerDefaultModel(provider)) {
+    sel.value = '__custom__';
+    if (custom) { custom.style.display = 'block'; custom.value = want; }
+  } else {
+    sel.value = cat.default || providerDefaultModel(provider);
+    if (custom) custom.style.display = 'none';
+  }
+}
+
+function onModelSelectChange() {
+  const sel = document.getElementById('set-model');
+  const custom = document.getElementById('set-model-custom');
+  if (!sel || !custom) return;
+  const isCustom = sel.value === '__custom__';
+  custom.style.display = isCustom ? 'block' : 'none';
+  if (isCustom && !custom.value) custom.focus();
+}
+
+function getSelectedModel() {
+  const sel = document.getElementById('set-model');
+  const custom = document.getElementById('set-model-custom');
+  const provider = document.getElementById('set-provider')?.value || settings.provider || 'gemini';
+  if (!sel) return providerDefaultModel(provider);
+  if (sel.value === '__custom__') return custom?.value?.trim() || providerDefaultModel(provider);
+  return sel.value?.trim() || providerDefaultModel(provider);
+}
+
 function settingsKey() {
   return currentUser?.id ? `hassan_settings_${currentUser.id}` : 'hassan_settings_guest';
 }
@@ -659,6 +768,13 @@ async function fetchUserSettings() {
     const r = await fetch('/api/user/settings', { headers: { 'x-token': authToken } });
     if (r.ok) {
       settings = await r.json();
+      await loadModelsCatalog();
+      const provider = settings.provider || FALLBACK_DEFAULTS.provider;
+      const resolved = resolveModelForProvider(provider, settings.model);
+      if (resolved !== settings.model) {
+        settings.model = resolved;
+        saveSettings({ model: resolved }, !!authToken);
+      }
       if (currentUser?.id) {
         localStorage.setItem(settingsKey(), JSON.stringify(settings));
       }
@@ -679,8 +795,17 @@ async function applyUserDefaults(force) {
       };
     }
   } catch {}
-  if (force || !settings.provider) {
-    saveSettings({ ...defs, api_key: '', cursor_api_key: '' }, !!authToken);
+  const legacyGemini = [...GEMINI_LEGACY];
+  const needsDefault = force
+    || !settings.provider
+    || (settings.provider === 'gemini' && legacyGemini.includes(settings.model || ''));
+  if (needsDefault) {
+    saveSettings({
+      ...defs,
+      model: defs.model || GEMINI_DEFAULT,
+      api_key: settings.api_key || '',
+      cursor_api_key: settings.cursor_api_key || '',
+    }, !!authToken);
     applySavedSettings();
   }
 }
@@ -695,6 +820,10 @@ function loadSettings() {
 
 function saveSettings(obj, syncServer = true) {
   settings = { ...settings, ...obj };
+  const provider = settings.provider || FALLBACK_DEFAULTS.provider;
+  if (!settings.model || (provider === 'gemini' && GEMINI_LEGACY.has(settings.model))) {
+    settings.model = resolveModelForProvider(provider, settings.model);
+  }
   if (currentUser?.id) {
     localStorage.setItem(settingsKey(), JSON.stringify(settings));
   }
@@ -703,7 +832,7 @@ function saveSettings(obj, syncServer = true) {
       provider: settings.provider || FALLBACK_DEFAULTS.provider,
       api_key: settings.api_key || '',
       cursor_api_key: settings.cursor_api_key || '',
-      model: settings.model || '',
+      model: settings.model || providerDefaultModel(provider),
       base_url: settings.base_url || '',
       theme: settings.theme || 'light',
     };
@@ -718,10 +847,12 @@ function saveSettings(obj, syncServer = true) {
 function applySavedSettings() {
   ensureDefaultSettings();
   const g = id => document.getElementById(id);
-  if (g('set-provider')) g('set-provider').value = settings.provider || FALLBACK_DEFAULTS.provider;
+  const provider = settings.provider || FALLBACK_DEFAULTS.provider;
+  const model = resolveModelForProvider(provider, settings.model);
+  if (g('set-provider')) g('set-provider').value = provider;
   if (g('set-api-key')) g('set-api-key').value = settings.api_key || '';
   if (g('set-cursor-key')) g('set-cursor-key').value = settings.cursor_api_key || '';
-  if (g('set-model')) g('set-model').value = settings.model || FALLBACK_DEFAULTS.model;
+  populateModelSelect(provider, model);
   if (g('set-base-url')) g('set-base-url').value = settings.base_url || FALLBACK_DEFAULTS.base_url;
   if (settings.theme) applyTheme(settings.theme);
   updateSettingsUI();
@@ -731,13 +862,20 @@ function ensureDefaultSettings() {
   if (!settings.provider) {
     settings = { ...FALLBACK_DEFAULTS, ...settings, api_key: settings.api_key || '', cursor_api_key: settings.cursor_api_key || '' };
   }
+  if (settings.provider === 'gemini') {
+    settings.model = resolveModelForProvider('gemini', settings.model);
+  }
 }
 
 function openSettings() {
   settingsModal.classList.add('open');
   settingsStatus.textContent = '';
   settingsStatus.className = 'settings-note';
-  updateSettingsUI();
+  loadModelsCatalog().then(() => {
+    const provider = document.getElementById('set-provider')?.value || settings.provider || FALLBACK_DEFAULTS.provider;
+    populateModelSelect(provider, resolveModelForProvider(provider, settings.model));
+    updateSettingsUI();
+  });
 }
 
 function closeSettings() { settingsModal.classList.remove('open'); }
@@ -757,7 +895,7 @@ async function doSaveSettings() {
     provider: g('set-provider'),
     api_key: g('set-api-key'),
     cursor_api_key: g('set-cursor-key'),
-    model: g('set-model'),
+    model: getSelectedModel(),
     base_url: g('set-base-url'),
   }, true);
   settingsStatus.textContent = 'Settings saved for your account!';

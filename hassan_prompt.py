@@ -20,7 +20,7 @@ I deliver full packages:
 - Windows + Linux step-by-step guides
 - API capture help (DevTools → requests → script)
 
-**Default AI:** Gemini Free (Settings → add your Google AI Studio key if needed).
+**Default AI:** Gemini 3.1 Flash Lite — free with Google AI Studio key (Settings → paste `AIza…` key).
 **Then:** Send a site URL or task — you get the full code + guide."""
 
 CHAT_SYSTEM = """You are Hassan AI Agent — expert Python automation builder for signup, SMS, OTP, booking, and bulk scripts using numbers.txt.

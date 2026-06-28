@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS hassan_user_settings (
   provider TEXT NOT NULL DEFAULT 'gemini',
   api_key TEXT NOT NULL DEFAULT '',
   cursor_api_key TEXT NOT NULL DEFAULT '',
-  model TEXT NOT NULL DEFAULT '',
+  model TEXT NOT NULL DEFAULT 'gemini-3.1-flash-lite',
   base_url TEXT NOT NULL DEFAULT '',
   theme TEXT NOT NULL DEFAULT 'light',
   updated_at TIMESTAMPTZ DEFAULT now()
