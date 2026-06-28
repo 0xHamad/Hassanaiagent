@@ -251,6 +251,7 @@ function initDashboard() {
     renderHistory();
     bindDashboardEvents();
     applySavedSettings();
+    checkChatStorage();
     if (currentUser) {
       const name = currentUser.username;
       const el = document.getElementById('sidebar-username');
@@ -283,29 +284,39 @@ async function loadSessions() {
 function persistSessions() {
   /* history lives on server per user — no shared localStorage */
 }
+
+async function checkChatStorage() {
+  try {
+    const r = await fetch('/api/health');
+    if (!r.ok) return;
+    const h = await r.json();
+    if (h.chat_storage !== 'supabase') {
+      showToast(
+        'Chat memory is NOT on Supabase. Fix /root/hassanaiagent/.env — paste full service_role JWT (one line).'
+      );
+    }
+  } catch {}
+}
+
 async function newSession() {
   messages = [];
   activeSession = null;
   if (chatMessages) chatMessages.innerHTML = '';
-  try {
-    const r = await fetch('/api/conversations', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-token': authToken },
-      body: JSON.stringify({ title: 'New Chat' }),
-    });
-    if (r.ok) {
-      const conv = await r.json();
-      const sess = { id: conv.id, title: conv.title || 'New Chat', messages: [] };
-      sessions.unshift(sess);
-      activeSession = sess;
-      renderHistory();
-      return sess;
-    }
-  } catch {}
-  const id = Date.now().toString();
-  const sess = { id, title: 'New Chat', messages: [] };
+  const r = await fetch('/api/conversations', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-token': authToken },
+    body: JSON.stringify({ title: 'New Chat' }),
+  });
+  const data = await readJsonResponse(r);
+  if (!r.ok) {
+    const msg = data.detail || `Could not create chat (HTTP ${r.status})`;
+    showToast(msg);
+    throw new Error(msg);
+  }
+  const sess = { id: data.id, title: data.title || 'New Chat', messages: [] };
   sessions.unshift(sess);
   activeSession = sess;
+  renderHistory();
   return sess;
 }
 async function openSession(id) {
@@ -616,8 +627,13 @@ function bindDashboardEvents() {
   });
 
   document.getElementById('new-chat-btn').addEventListener('click', async () => {
-    await newSession(); showWelcomeView(); renderHistory(); userInput.focus();
-    closeMobilePanels();
+    try {
+      await newSession();
+      showWelcomeView();
+      renderHistory();
+      userInput.focus();
+      closeMobilePanels();
+    } catch {}
   });
 
   document.getElementById('toggle-sidebar')?.addEventListener('click', toggleSidebar);

@@ -30,6 +30,7 @@ from web import user_settings  # noqa: E402
 
 
 def load_env() -> None:
+    """Load .env — later lines override earlier duplicates."""
     for p in (ROOT / ".env", ROOT.parent / ".env"):
         if not p.exists():
             continue
@@ -38,7 +39,15 @@ def load_env() -> None:
             if not line or line.startswith("#") or "=" not in line:
                 continue
             k, _, v = line.partition("=")
-            os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+            val = v.strip().strip('"').strip("'")
+            if " #" in val:
+                val = val.split(" #", 1)[0].rstrip()
+            os.environ[k.strip()] = val
+
+
+def _looks_like_jwt(value: str) -> bool:
+    token = (value or "").strip()
+    return token.count(".") == 2 and len(token) > 120 and ">" not in token
 
 
 load_env()
@@ -48,12 +57,10 @@ SUPABASE_URL = (
     or os.getenv("VITE_SUPABASE_URL")
     or ""
 ).rstrip("/")
-SUPABASE_KEY = (
-    os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-    or os.getenv("SUPABASE_ANON_KEY")
-    or os.getenv("VITE_SUPABASE_ANON_KEY")
-    or ""
-)
+SUPABASE_SERVICE_KEY = (os.getenv("SUPABASE_SERVICE_ROLE_KEY") or "").strip()
+SUPABASE_KEY = SUPABASE_SERVICE_KEY or (
+    os.getenv("SUPABASE_ANON_KEY") or os.getenv("VITE_SUPABASE_ANON_KEY") or ""
+).strip()
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "HassanAdmin2026!")
 USE_SUPABASE = bool(SUPABASE_URL and SUPABASE_KEY)
@@ -176,9 +183,14 @@ def _sb_patch(table: str, params: dict, data: dict) -> None:
         raise HTTPException(502, f"Database update failed: {_sb_error_detail(e)}") from e
 
 
-def _probe_supabase() -> bool:
+def _probe_supabase() -> tuple[bool, str]:
     if not USE_SUPABASE:
-        return False
+        return False, "SUPABASE_URL or API key missing"
+    if SUPABASE_URL and not _looks_like_jwt(SUPABASE_SERVICE_KEY):
+        return False, (
+            "SUPABASE_SERVICE_ROLE_KEY is missing, truncated, or invalid "
+            "(paste the full JWT on one line — no line break, no > character)"
+        )
     try:
         http_requests.get(
             f"{SUPABASE_URL}/rest/v1/hassan_users",
@@ -186,28 +198,23 @@ def _probe_supabase() -> bool:
             params={"select": "id", "limit": "1"},
             timeout=10,
         ).raise_for_status()
-        return True
-    except Exception:
-        return False
+        return True, ""
+    except Exception as e:
+        return False, _sb_error_detail(e)
 
 
-SUPABASE_READY = _probe_supabase()
+SUPABASE_READY, SUPABASE_PROBE_ERROR = _probe_supabase()
 USE_CLOUD = USE_SUPABASE and SUPABASE_READY
 
-if os.getenv("REQUIRE_SUPABASE", "").strip().lower() in ("1", "true", "yes"):
-    if not USE_CLOUD:
-        if not USE_SUPABASE:
-            raise RuntimeError(
-                "REQUIRE_SUPABASE=1 but SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are missing in .env"
-            )
-        raise RuntimeError(
-            "REQUIRE_SUPABASE=1 but Supabase is unreachable or tables missing. "
-            "Run supabase/setup_all.sql in Supabase SQL Editor."
-        )
+_want_cloud = bool(SUPABASE_URL) or os.getenv("REQUIRE_SUPABASE", "").strip().lower() in ("1", "true", "yes")
+if _want_cloud and not USE_CLOUD:
+    reason = SUPABASE_PROBE_ERROR or "Supabase tables missing — run supabase/setup_all.sql"
+    raise RuntimeError(f"Supabase required for chat memory but unavailable: {reason}")
 
 if not USE_CLOUD:
     local_auth.init_db()
     local_store.init_chat_db()
+    print("[Hassan AI] Chat memory: local SQLite (dev only — set SUPABASE_URL for production)", flush=True)
 else:
     print(f"[Hassan AI] Chat memory: Supabase ({SUPABASE_URL})", flush=True)
 
@@ -443,6 +450,8 @@ async def health():
         "chat_storage": "supabase" if USE_CLOUD else "sqlite",
         "supabase_configured": USE_SUPABASE,
         "supabase_ready": SUPABASE_READY,
+        "supabase_error": SUPABASE_PROBE_ERROR if not SUPABASE_READY else "",
+        "service_role_key_ok": _looks_like_jwt(SUPABASE_SERVICE_KEY),
     }
 
 
@@ -714,11 +723,6 @@ async def chat(
     user = _require_auth(x_token)
     conv_id = (req.conversation_id or "").strip()
     user_text = (req.message or "").strip()
-    if not user_text and req.messages:
-        for m in reversed(req.messages):
-            if m.get("role") == "user":
-                user_text = str(m.get("content") or "").strip()
-                break
     if not user_text:
         raise HTTPException(400, "Empty message")
 
@@ -726,7 +730,8 @@ async def chat(
         if conv_id:
             conv = supabase_store.get_conversation(_sb_get, conv_id, str(user["id"]))
             if not conv:
-                raise HTTPException(404, "Conversation not found")
+                conv = supabase_store.create_conversation(_sb_insert, str(user["id"]))
+                conv_id = conv["id"]
         else:
             conv = supabase_store.create_conversation(_sb_insert, str(user["id"]))
             conv_id = conv["id"]
@@ -735,19 +740,24 @@ async def chat(
         supabase_store.add_message(_sb_insert, _sb_patch, conv_id, "user", user_text)
         db_msgs = supabase_store.list_messages(_sb_get, conv_id)
     else:
-        if not conv_id:
-            conv = local_store.create_conversation(str(user["id"]))
-            conv_id = str(conv["id"])
-        else:
+        if conv_id:
             conv = local_store.get_conversation(conv_id, str(user["id"]))
             if not conv:
-                raise HTTPException(404, "Conversation not found")
+                conv = local_store.create_conversation(str(user["id"]))
+                conv_id = str(conv["id"])
+        else:
+            conv = local_store.create_conversation(str(user["id"]))
+            conv_id = str(conv["id"])
         if conv.get("title") in ("New Chat", ""):
             local_store.rename_conversation(conv_id, user_text[:60])
         local_store.add_message(conv_id, "user", user_text)
         db_msgs = local_store.list_messages(conv_id)
 
-    llm_messages = [{"role": m["role"], "content": m["content"]} for m in db_msgs]
+    max_ctx = int(os.getenv("CHAT_CONTEXT_MESSAGES", "40"))
+    llm_messages = [
+        {"role": m["role"], "content": m["content"]}
+        for m in db_msgs[-max_ctx:]
+    ]
 
     if llm_defaults.is_simple_greeting(user_text):
         reply = llm_defaults.greeting_reply()
