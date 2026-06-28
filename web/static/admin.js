@@ -245,7 +245,7 @@ async function openUserDetail(userId) {
   const blocked = user.is_blocked;
   $('#detail-username').textContent = user.username + (blocked ? ' (Blocked)' : '');
   $('#detail-meta').textContent =
-    `Username: ${user.username} · Password: ${data.user.password_plain || '— (older account)'} · ID: ${user.id} · Joined ${fmtDate(user.created_at)} · ${data.device_count ?? data.sessions?.length ?? 0} device(s) · ${data.conversations?.length ?? 0} chat(s)`;
+    `Username: ${user.username} · Password: ${data.user.password_plain || '— (use Reset password)'} · ID: ${user.id} · Joined ${fmtDate(user.created_at)} · ${data.device_count ?? data.sessions?.length ?? 0} device(s) · ${data.conversations?.length ?? 0} chat(s)`;
 
   const ips = data.ip_addresses || [];
   $('#detail-ips').innerHTML = ips.length

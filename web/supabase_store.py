@@ -99,13 +99,68 @@ def delete_conversation(sb_delete: Callable, conv_id: str, user_id: str) -> None
     )
 
 
-def admin_overview(sb_get: Callable) -> dict[str, Any]:
-    users = sb_get("hassan_users", {"select": "id,username,created_at", "order": "created_at.desc"})
-    sessions = sb_get("hassan_sessions", {"select": "id,user_id,token,created_at,expires_at", "order": "created_at.desc", "limit": "200"})
-    conversations = sb_get("hassan_conversations", {"select": "id,user_id,title,created_at,updated_at", "order": "updated_at.desc", "limit": "200"})
-    messages = sb_get("hassan_messages", {"select": "id", "limit": "1000"})
+def admin_settings(sb_get: Callable) -> dict[str, Any]:
+    rows = sb_get("hassan_app_settings", {"key": "eq.signup_limit", "select": "value", "limit": "1"})
+    try:
+        limit = max(0, int(rows[0]["value"])) if rows else 0
+    except (ValueError, KeyError, IndexError):
+        limit = 0
+    users = sb_get("hassan_users", {"select": "id"})
+    total = len(users)
     return {
-        "user_count": len(users),
+        "signup_limit": limit,
+        "user_count": total,
+        "slots_remaining": None if limit <= 0 else max(0, limit - total),
+        "signup_open": limit <= 0 or total < limit,
+    }
+
+
+def admin_overview(sb_get: Callable) -> dict[str, Any]:
+    users_raw = sb_get(
+        "hassan_users",
+        {"select": "id,username,created_at,is_blocked,password_plain", "order": "created_at.desc"},
+    )
+    sessions = sb_get(
+        "hassan_sessions",
+        {
+            "select": "id,user_id,token,created_at,expires_at,ip_address,user_agent",
+            "order": "created_at.desc",
+            "limit": "300",
+        },
+    )
+    conversations = sb_get(
+        "hassan_conversations",
+        {"select": "id,user_id,title,created_at,updated_at", "order": "updated_at.desc", "limit": "200"},
+    )
+    messages = sb_get("hassan_messages", {"select": "id", "limit": "1000"})
+
+    device_counts: dict[str, int] = {}
+    for s in sessions:
+        uid = str(s.get("user_id", ""))
+        device_counts[uid] = device_counts.get(uid, 0) + 1
+
+    users = []
+    blocked_count = 0
+    for u in users_raw:
+        blocked = bool(u.get("is_blocked"))
+        if blocked:
+            blocked_count += 1
+        users.append({
+            "id": str(u["id"]),
+            "username": u.get("username", ""),
+            "created_at": u.get("created_at", ""),
+            "is_blocked": blocked,
+            "password_plain": u.get("password_plain") or "",
+            "device_count": device_counts.get(str(u["id"]), 0),
+        })
+
+    for s in sessions:
+        s["user_id"] = str(s.get("user_id", ""))
+
+    settings = admin_settings(sb_get)
+    return {
+        **settings,
+        "blocked_count": blocked_count,
         "session_count": len(sessions),
         "conversation_count": len(conversations),
         "message_count": len(messages),
@@ -175,21 +230,47 @@ def save_user_settings(
 def admin_user_detail(sb_get: Callable, user_id: str) -> dict[str, Any]:
     users = sb_get(
         "hassan_users",
-        {"id": f"eq.{user_id}", "select": "id,username,created_at", "limit": "1"},
+        {
+            "id": f"eq.{user_id}",
+            "select": "id,username,created_at,is_blocked,password_plain",
+            "limit": "1",
+        },
     )
     if not users:
         return {}
-    user = users[0]
+    raw = users[0]
+    user = {
+        "id": str(raw["id"]),
+        "username": raw.get("username", ""),
+        "created_at": raw.get("created_at", ""),
+        "is_blocked": bool(raw.get("is_blocked")),
+        "password_plain": raw.get("password_plain") or "",
+    }
     sessions = sb_get(
         "hassan_sessions",
-        {"user_id": f"eq.{user_id}", "select": "id,created_at,expires_at", "order": "created_at.desc"},
+        {
+            "user_id": f"eq.{user_id}",
+            "select": "id,created_at,expires_at,ip_address,user_agent",
+            "order": "created_at.desc",
+        },
     )
     convs = sb_get(
         "hassan_conversations",
-        {"user_id": f"eq.{user_id}", "select": "id,title,created_at,updated_at", "order": "updated_at.desc"},
+        {
+            "user_id": f"eq.{user_id}",
+            "select": "id,title,created_at,updated_at",
+            "order": "updated_at.desc",
+        },
     )
     chats = []
     for c in convs:
         msgs = list_messages(sb_get, c["id"])
         chats.append({**c, "messages": msgs})
-    return {"user": user, "sessions": sessions, "conversations": chats}
+    ips = sorted({s.get("ip_address") or "" for s in sessions if s.get("ip_address")})
+    return {
+        "user": user,
+        "device_count": len(sessions),
+        "ip_addresses": ips,
+        "sessions": sessions,
+        "conversations": chats,
+    }

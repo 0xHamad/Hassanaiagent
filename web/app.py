@@ -614,16 +614,15 @@ async def admin_logout(x_admin_token: str | None = Header(default=None, alias="x
 async def admin_overview_route(x_admin_token: str | None = Header(default=None, alias="x-admin-token")):
     _require_admin(x_admin_token)
     if USE_CLOUD:
-        try:
-            return supabase_store.admin_overview(_sb_get)
-        except HTTPException:
-            return local_admin.admin_overview()
+        return supabase_store.admin_overview(_sb_get)
     return local_admin.admin_overview()
 
 
 @app.get("/api/admin/settings")
 async def admin_settings_get(x_admin_token: str | None = Header(default=None, alias="x-admin-token")):
     _require_admin(x_admin_token)
+    if USE_CLOUD:
+        return supabase_store.admin_settings(_sb_get)
     return local_admin.admin_settings()
 
 
@@ -633,16 +632,15 @@ async def admin_settings_signup_limit(
     x_admin_token: str | None = Header(default=None, alias="x-admin-token"),
 ):
     _require_admin(x_admin_token)
-    limit = local_admin.set_signup_limit(body.limit)
     if USE_CLOUD:
-        try:
-            rows = _sb_get("hassan_app_settings", {"key": "eq.signup_limit", "select": "key", "limit": "1"})
-            if rows:
-                _sb_patch("hassan_app_settings", {"key": "eq.signup_limit"}, {"value": str(limit)})
-            else:
-                _sb_insert("hassan_app_settings", {"key": "signup_limit", "value": str(limit)})
-        except Exception:
-            pass
+        limit = max(0, int(body.limit))
+        rows = _sb_get("hassan_app_settings", {"key": "eq.signup_limit", "select": "key", "limit": "1"})
+        if rows:
+            _sb_patch("hassan_app_settings", {"key": "eq.signup_limit"}, {"value": str(limit)})
+        else:
+            _sb_insert("hassan_app_settings", {"key": "signup_limit", "value": str(limit)})
+        return supabase_store.admin_settings(_sb_get)
+    local_admin.set_signup_limit(body.limit)
     return local_admin.admin_settings()
 
 
@@ -650,10 +648,7 @@ async def admin_settings_signup_limit(
 async def admin_user_detail_route(user_id: str, x_admin_token: str | None = Header(default=None, alias="x-admin-token")):
     _require_admin(x_admin_token)
     if USE_CLOUD:
-        try:
-            detail = supabase_store.admin_user_detail(_sb_get, user_id)
-        except HTTPException:
-            detail = local_admin.admin_user_detail(user_id)
+        detail = supabase_store.admin_user_detail(_sb_get, user_id)
     else:
         detail = local_admin.admin_user_detail(user_id)
     if not detail:
@@ -664,42 +659,37 @@ async def admin_user_detail_route(user_id: str, x_admin_token: str | None = Head
 @app.post("/api/admin/users/{user_id}/block")
 async def admin_block_user(user_id: str, x_admin_token: str | None = Header(default=None, alias="x-admin-token")):
     _require_admin(x_admin_token)
-    local_admin.block_user(user_id)
     if USE_CLOUD:
-        try:
-            _sb_patch("hassan_users", {"id": f"eq.{user_id}"}, {"is_blocked": True})
-            _sb_delete("hassan_sessions", {"user_id": f"eq.{user_id}"})
-        except Exception:
-            pass
+        _sb_patch("hassan_users", {"id": f"eq.{user_id}"}, {"is_blocked": True})
+        _sb_delete("hassan_sessions", {"user_id": f"eq.{user_id}"})
+    else:
+        local_admin.block_user(user_id)
     return {"ok": True, "blocked": True}
 
 
 @app.post("/api/admin/users/{user_id}/unblock")
 async def admin_unblock_user(user_id: str, x_admin_token: str | None = Header(default=None, alias="x-admin-token")):
     _require_admin(x_admin_token)
-    local_admin.unblock_user(user_id)
     if USE_CLOUD:
-        try:
-            _sb_patch("hassan_users", {"id": f"eq.{user_id}"}, {"is_blocked": False})
-        except Exception:
-            pass
+        _sb_patch("hassan_users", {"id": f"eq.{user_id}"}, {"is_blocked": False})
+    else:
+        local_admin.unblock_user(user_id)
     return {"ok": True, "blocked": False}
 
 
 @app.delete("/api/admin/users/{user_id}")
 async def admin_delete_user(user_id: str, x_admin_token: str | None = Header(default=None, alias="x-admin-token")):
     _require_admin(x_admin_token)
-    local_admin.delete_user(user_id)
     if USE_CLOUD:
-        try:
-            convs = _sb_get("hassan_conversations", {"user_id": f"eq.{user_id}", "select": "id"})
-            for c in convs:
-                _sb_delete("hassan_messages", {"conversation_id": f"eq.{c['id']}"})
-            _sb_delete("hassan_conversations", {"user_id": f"eq.{user_id}"})
-            _sb_delete("hassan_sessions", {"user_id": f"eq.{user_id}"})
-            _sb_delete("hassan_users", {"id": f"eq.{user_id}"})
-        except Exception:
-            pass
+        convs = _sb_get("hassan_conversations", {"user_id": f"eq.{user_id}", "select": "id"})
+        for c in convs:
+            _sb_delete("hassan_messages", {"conversation_id": f"eq.{c['id']}"})
+        _sb_delete("hassan_user_settings", {"user_id": f"eq.{user_id}"})
+        _sb_delete("hassan_conversations", {"user_id": f"eq.{user_id}"})
+        _sb_delete("hassan_sessions", {"user_id": f"eq.{user_id}"})
+        _sb_delete("hassan_users", {"id": f"eq.{user_id}"})
+    else:
+        local_admin.delete_user(user_id)
     return {"ok": True}
 
 
@@ -710,22 +700,22 @@ async def admin_reset_password(
     x_admin_token: str | None = Header(default=None, alias="x-admin-token"),
 ):
     _require_admin(x_admin_token)
-    try:
-        local_admin.reset_password(user_id, body.password)
-    except ValueError as e:
-        raise HTTPException(400, str(e)) from e
+    if len(body.password) < 6:
+        raise HTTPException(400, "Password must be at least 6 characters")
     if USE_CLOUD:
+        salt = secrets.token_hex(16)
+        pw_hash = _hash_password(body.password, salt)
+        _sb_patch("hassan_users", {"id": f"eq.{user_id}"}, {
+            "password_hash": pw_hash,
+            "salt": salt,
+            "password_plain": body.password,
+        })
+        _sb_delete("hassan_sessions", {"user_id": f"eq.{user_id}"})
+    else:
         try:
-            salt = secrets.token_hex(16)
-            pw_hash = _hash_password(body.password, salt)
-            _sb_patch("hassan_users", {"id": f"eq.{user_id}"}, {
-                "password_hash": pw_hash,
-                "salt": salt,
-                "password_plain": body.password,
-            })
-            _sb_delete("hassan_sessions", {"user_id": f"eq.{user_id}"})
-        except Exception:
-            pass
+            local_admin.reset_password(user_id, body.password)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
     return {"ok": True}
 
 
