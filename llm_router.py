@@ -82,7 +82,7 @@ class LlmConfig:
         provider = self.provider or "deepseek"
         model = self.model
         defaults = {
-            "anthropic": ("", model or "claude-sonnet-4-20250514", ""),
+            "anthropic": ("", model or "claude-sonnet-4", ""),
             "openai": ("", model or "gpt-4o", "https://api.openai.com/v1"),
             "deepseek": ("", model or "deepseek-chat", "https://api.deepseek.com/v1"),
             "openrouter": ("", model or "anthropic/claude-sonnet-4", "https://openrouter.ai/api/v1"),
