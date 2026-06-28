@@ -46,9 +46,13 @@ def _ensure_schema() -> None:
 def _row_to_dict(row) -> dict[str, Any]:
     if not row:
         return dict(DEFAULTS)
-    model = row["model"] or DEFAULTS["model"]
+    if isinstance(row, dict):
+        get = row.get
+    else:
+        get = lambda k, d=None: row[k] if k in row.keys() else d
+    model = get("model") or DEFAULTS["model"]
     # Legacy auto-default → latest free Gemini
-    if (row["provider"] or DEFAULTS["provider"]) == "gemini" and model in (
+    if (get("provider") or DEFAULTS["provider"]) == "gemini" and model in (
         "",
         "gemini-2.5-flash",
         "gemini-2.5-flash-lite",
@@ -57,12 +61,12 @@ def _row_to_dict(row) -> dict[str, Any]:
     ):
         model = DEFAULTS["model"]
     return {
-        "provider": row["provider"] or DEFAULTS["provider"],
-        "api_key": row["api_key"] or "",
-        "cursor_api_key": row["cursor_api_key"] or "",
+        "provider": get("provider") or DEFAULTS["provider"],
+        "api_key": get("api_key") or "",
+        "cursor_api_key": get("cursor_api_key") or "",
         "model": model,
-        "base_url": row["base_url"] or DEFAULTS["base_url"],
-        "theme": row["theme"] or "light",
+        "base_url": get("base_url") or DEFAULTS["base_url"],
+        "theme": get("theme") or "light",
     }
 
 

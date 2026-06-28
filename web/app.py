@@ -194,9 +194,22 @@ def _probe_supabase() -> bool:
 SUPABASE_READY = _probe_supabase()
 USE_CLOUD = USE_SUPABASE and SUPABASE_READY
 
+if os.getenv("REQUIRE_SUPABASE", "").strip().lower() in ("1", "true", "yes"):
+    if not USE_CLOUD:
+        if not USE_SUPABASE:
+            raise RuntimeError(
+                "REQUIRE_SUPABASE=1 but SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are missing in .env"
+            )
+        raise RuntimeError(
+            "REQUIRE_SUPABASE=1 but Supabase is unreachable or tables missing. "
+            "Run supabase/setup_all.sql in Supabase SQL Editor."
+        )
+
 if not USE_CLOUD:
     local_auth.init_db()
     local_store.init_chat_db()
+else:
+    print(f"[Hassan AI] Chat memory: Supabase ({SUPABASE_URL})", flush=True)
 
 
 # ─── Password helpers (Supabase) ──────────────────────────────────────────────
@@ -219,7 +232,8 @@ class AuthRequest(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    messages: list[dict]
+    message: str = ""
+    messages: list[dict] = Field(default_factory=list)  # legacy — history loaded server-side
     conversation_id: str = ""
     provider: str = ""
     api_key: str = ""
@@ -426,6 +440,7 @@ async def health():
     return {
         "ok": True,
         "auth_backend": "supabase" if USE_CLOUD else "sqlite",
+        "chat_storage": "supabase" if USE_CLOUD else "sqlite",
         "supabase_configured": USE_SUPABASE,
         "supabase_ready": SUPABASE_READY,
     }
@@ -485,6 +500,8 @@ async def me(x_token: str | None = Header(default=None, alias="x-token")):
 @app.get("/api/user/settings")
 async def api_get_user_settings(x_token: str | None = Header(default=None, alias="x-token")):
     user = _require_auth(x_token)
+    if USE_CLOUD:
+        return supabase_store.get_user_settings(_sb_get, str(user["id"]))
     return user_settings.get_settings(str(user["id"]))
 
 
@@ -494,8 +511,11 @@ async def api_save_user_settings(
     x_token: str | None = Header(default=None, alias="x-token"),
 ):
     user = _require_auth(x_token)
-    saved = user_settings.save_settings(str(user["id"]), body.model_dump())
-    return saved
+    if USE_CLOUD:
+        return supabase_store.save_user_settings(
+            _sb_get, _sb_insert, _sb_patch, str(user["id"]), body.model_dump()
+        )
+    return user_settings.save_settings(str(user["id"]), body.model_dump())
 
 
 @app.get("/api/conversations")
@@ -693,12 +713,14 @@ async def chat(
 ):
     user = _require_auth(x_token)
     conv_id = (req.conversation_id or "").strip()
-    user_text = ""
-    if req.messages:
+    user_text = (req.message or "").strip()
+    if not user_text and req.messages:
         for m in reversed(req.messages):
             if m.get("role") == "user":
                 user_text = str(m.get("content") or "").strip()
                 break
+    if not user_text:
+        raise HTTPException(400, "Empty message")
 
     if USE_CLOUD:
         if conv_id:
@@ -708,14 +730,14 @@ async def chat(
         else:
             conv = supabase_store.create_conversation(_sb_insert, str(user["id"]))
             conv_id = conv["id"]
-        if user_text:
-            if conv.get("title") in ("New Chat", ""):
-                supabase_store.rename_conversation(_sb_patch, conv_id, user_text[:60])
-            supabase_store.add_message(_sb_insert, _sb_patch, conv_id, "user", user_text)
-    elif user_text:
+        if conv.get("title") in ("New Chat", ""):
+            supabase_store.rename_conversation(_sb_patch, conv_id, user_text[:60])
+        supabase_store.add_message(_sb_insert, _sb_patch, conv_id, "user", user_text)
+        db_msgs = supabase_store.list_messages(_sb_get, conv_id)
+    else:
         if not conv_id:
             conv = local_store.create_conversation(str(user["id"]))
-            conv_id = conv["id"]
+            conv_id = str(conv["id"])
         else:
             conv = local_store.get_conversation(conv_id, str(user["id"]))
             if not conv:
@@ -723,14 +745,25 @@ async def chat(
         if conv.get("title") in ("New Chat", ""):
             local_store.rename_conversation(conv_id, user_text[:60])
         local_store.add_message(conv_id, "user", user_text)
+        db_msgs = local_store.list_messages(conv_id)
 
-    if user_text and llm_defaults.is_simple_greeting(user_text):
+    llm_messages = [{"role": m["role"], "content": m["content"]} for m in db_msgs]
+
+    if llm_defaults.is_simple_greeting(user_text):
         reply = llm_defaults.greeting_reply()
-        if USE_CLOUD and conv_id:
+        if USE_CLOUD:
             supabase_store.add_message(_sb_insert, _sb_patch, conv_id, "assistant", reply)
-        elif conv_id:
+        else:
             local_store.add_message(conv_id, "assistant", reply)
-        return {"reply": reply, "conversation_id": conv_id or None}
+        return {"reply": reply, "conversation_id": conv_id}
+
+    if llm_defaults.needs_clarification(user_text):
+        reply = llm_defaults.clarification_reply()
+        if USE_CLOUD:
+            supabase_store.add_message(_sb_insert, _sb_patch, conv_id, "assistant", reply)
+        else:
+            local_store.add_message(conv_id, "assistant", reply)
+        return {"reply": reply, "conversation_id": conv_id}
 
     provider = (req.provider or llm_defaults.default_provider()).strip().lower()
     model = (req.model or llm_defaults.default_model(provider)).strip()
@@ -763,12 +796,12 @@ async def chat(
         )
 
     try:
-        reply = chat_completion(req.messages, cfg, system=CHAT_SYSTEM)
-        if USE_CLOUD and conv_id:
+        reply = chat_completion(llm_messages, cfg, system=CHAT_SYSTEM)
+        if USE_CLOUD:
             supabase_store.add_message(_sb_insert, _sb_patch, conv_id, "assistant", reply)
-        elif conv_id:
+        else:
             local_store.add_message(conv_id, "assistant", reply)
-        return {"reply": reply, "conversation_id": conv_id or None}
+        return {"reply": reply, "conversation_id": conv_id}
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:

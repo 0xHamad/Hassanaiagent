@@ -115,6 +115,63 @@ def admin_overview(sb_get: Callable) -> dict[str, Any]:
     }
 
 
+def get_user_settings(sb_get: Callable, user_id: str) -> dict[str, Any]:
+    from web.user_settings import DEFAULTS, _row_to_dict
+
+    rows = sb_get(
+        "hassan_user_settings",
+        {
+            "user_id": f"eq.{user_id}",
+            "select": "provider,api_key,cursor_api_key,model,base_url,theme",
+            "limit": "1",
+        },
+    )
+    if not rows:
+        return dict(DEFAULTS)
+    return _row_to_dict(rows[0])
+
+
+def save_user_settings(
+    sb_get: Callable,
+    sb_insert: Callable,
+    sb_patch: Callable,
+    user_id: str,
+    data: dict[str, Any],
+) -> dict[str, Any]:
+    from datetime import datetime, timezone
+
+    from llm_router import normalize_gemini_model
+    from web.user_settings import DEFAULTS
+
+    merged = {**DEFAULTS, **{k: str(data.get(k, "") or "") for k in DEFAULTS}}
+    if merged.get("provider") == "gemini" and merged.get("model"):
+        merged["model"] = normalize_gemini_model(merged["model"])
+    now = datetime.now(timezone.utc).isoformat()
+    payload = {
+        "user_id": user_id,
+        "provider": merged["provider"],
+        "api_key": merged["api_key"],
+        "cursor_api_key": merged["cursor_api_key"],
+        "model": merged["model"],
+        "base_url": merged["base_url"],
+        "theme": merged["theme"],
+        "updated_at": now,
+    }
+    existing = sb_get(
+        "hassan_user_settings",
+        {"user_id": f"eq.{user_id}", "select": "user_id", "limit": "1"},
+    )
+    if existing:
+        sb_patch(
+            "hassan_user_settings",
+            {"user_id": f"eq.{user_id}"},
+            {k: v for k, v in payload.items() if k != "user_id"},
+        )
+    else:
+        sb_insert("hassan_user_settings", payload)
+    return merged
+
+
 def admin_user_detail(sb_get: Callable, user_id: str) -> dict[str, Any]:
     users = sb_get(
         "hassan_users",

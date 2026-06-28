@@ -184,6 +184,7 @@ async function doLogin() {
     if (!r.ok) { errEl.textContent = data.detail || 'Login failed.'; return; }
     authToken = data.token;
     localStorage.setItem('hassan_token', authToken);
+    resetChatState();
     await refreshCurrentUser();
     await fetchUserSettings();
     if (!settings.provider) await applyUserDefaults(true);
@@ -228,6 +229,7 @@ async function doSignup() {
     if (!r.ok) { errEl.textContent = data.detail || 'Signup failed.'; return; }
     authToken = data.token;
     localStorage.setItem('hassan_token', authToken);
+    resetChatState();
     await refreshCurrentUser();
     await fetchUserSettings();
     await applyUserDefaults(true);
@@ -262,6 +264,8 @@ function initDashboard() {
 
 // ─── Sessions (Supabase via API) ───────────────────────────────────────────────
 async function loadSessions() {
+  sessions = [];
+  if (!authToken) return;
   try {
     const r = await fetch('/api/conversations', { headers: { 'x-token': authToken } });
     if (!r.ok) throw new Error('api');
@@ -273,14 +277,16 @@ async function loadSessions() {
       messages: [],
     }));
   } catch {
-    try { sessions = JSON.parse(localStorage.getItem('hassan_sessions') || '[]'); }
-    catch { sessions = []; }
+    sessions = [];
   }
 }
 function persistSessions() {
-  localStorage.setItem('hassan_sessions', JSON.stringify(sessions.slice(0, 80)));
+  /* history lives on server per user — no shared localStorage */
 }
 async function newSession() {
+  messages = [];
+  activeSession = null;
+  if (chatMessages) chatMessages.innerHTML = '';
   try {
     const r = await fetch('/api/conversations', {
       method: 'POST',
@@ -292,7 +298,6 @@ async function newSession() {
       const sess = { id: conv.id, title: conv.title || 'New Chat', messages: [] };
       sessions.unshift(sess);
       activeSession = sess;
-      messages = sess.messages;
       renderHistory();
       return sess;
     }
@@ -301,8 +306,6 @@ async function newSession() {
   const sess = { id, title: 'New Chat', messages: [] };
   sessions.unshift(sess);
   activeSession = sess;
-  messages = sess.messages;
-  persistSessions();
   return sess;
 }
 async function openSession(id) {
@@ -468,7 +471,7 @@ async function sendMessage(text) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-token': authToken },
       body: JSON.stringify({
-        messages,
+        message: text,
         conversation_id: activeSession?.id || '',
         provider: settings.provider || '',
         api_key: settings.api_key || '',
@@ -570,13 +573,24 @@ function closeMobilePanels() {
   updateMobileBackdrop();
 }
 
+function resetChatState() {
+  messages = [];
+  sessions = [];
+  activeSession = null;
+  if (chatMessages) chatMessages.innerHTML = '';
+  localStorage.removeItem('hassan_sessions');
+}
+
 // ─── Logout ────────────────────────────────────────────────────────────────────
 async function doLogout() {
+  const uid = currentUser?.id;
   try { await fetch('/api/auth/logout', { method: 'POST', headers: { 'x-token': authToken } }); } catch {}
   authToken = '';
   currentUser = null;
   settings = {};
+  resetChatState();
   localStorage.removeItem('hassan_token');
+  if (uid) localStorage.removeItem(`hassan_settings_${uid}`);
   dashboard.style.display = 'none';
   authEventsBound = false;
   showAuth('login');

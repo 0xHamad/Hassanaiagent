@@ -5,13 +5,19 @@ from __future__ import annotations
 import os
 import re
 
-from hassan_prompt import HASSAN_GREETING
+from hassan_prompt import CLARIFICATION_REPLY, HASSAN_GREETING
 from web.models_catalog import DEFAULT_GEMINI_MODEL, default_model_for
 
 GREETING_WORDS = frozenset({
     "h", "hi", "hey", "hello", "yo", "salam", "aoa", "assalam", "assalamu",
     "hlw", "helo", "hii", "hiii",
 })
+
+SCRIPT_HINTS = (
+    "script", "signup", "sign up", "register", "otp", "sms", "bulk", "automate",
+    "automation", "numbers.txt", "booking", "login", "api", "http://", "https://",
+    "www.", ".com", "capture", "devtool", "requests", "python", "vps", "proxy",
+)
 
 
 def is_simple_greeting(text: str) -> bool:
@@ -25,8 +31,30 @@ def is_simple_greeting(text: str) -> bool:
     return word in GREETING_WORDS
 
 
+def needs_clarification(text: str) -> bool:
+    """Short/unclear message — don't send to LLM for full script dump."""
+    raw = (text or "").strip()
+    if not raw or is_simple_greeting(raw):
+        return False
+    low = raw.lower()
+    if any(h in low for h in SCRIPT_HINTS):
+        return False
+    if "http" in low or re.search(r"\.\w{2,}", raw):
+        return False
+    words = raw.split()
+    if len(words) == 1 and len(raw) <= 12:
+        return True
+    if len(raw) <= 4:
+        return True
+    return False
+
+
 def greeting_reply() -> str:
     return HASSAN_GREETING
+
+
+def clarification_reply() -> str:
+    return CLARIFICATION_REPLY
 
 
 def default_provider() -> str:

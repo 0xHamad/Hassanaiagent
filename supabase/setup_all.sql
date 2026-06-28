@@ -65,6 +65,14 @@ ALTER TABLE hassan_sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE hassan_conversations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE hassan_messages ENABLE ROW LEVEL SECURITY;
 
+ALTER TABLE hassan_user_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE hassan_app_settings ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "allow_all_user_settings" ON hassan_user_settings FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "allow_select_app_settings" ON hassan_app_settings FOR SELECT TO anon, authenticated USING (true);
+CREATE POLICY "allow_update_app_settings" ON hassan_app_settings FOR UPDATE TO anon, authenticated USING (true);
+CREATE POLICY "allow_insert_app_settings" ON hassan_app_settings FOR INSERT TO anon, authenticated WITH CHECK (true);
+
 CREATE POLICY "allow_insert_users" ON hassan_users FOR INSERT TO anon, authenticated WITH CHECK (true);
 CREATE POLICY "allow_select_users" ON hassan_users FOR SELECT TO anon, authenticated USING (true);
 CREATE POLICY "allow_insert_sessions" ON hassan_sessions FOR INSERT TO anon, authenticated WITH CHECK (true);
