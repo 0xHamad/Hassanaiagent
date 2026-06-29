@@ -6,7 +6,7 @@ import os
 
 import requests
 
-from web.sms_platforms.base import LiveSms
+from web.sms_platforms.base import LiveSms, resolve_cli_display
 
 UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -42,6 +42,7 @@ def fetch() -> list[LiveSms]:
             continue
         name = str(c.get("name") or "")
         locale = str(c.get("locale") or name.title())
+        dial = str(c.get("country") or "")
         try:
             r = session.get(
                 f"https://onlinesim.io/api/v1/free_numbers_content/countries/{name}",
@@ -51,11 +52,19 @@ def fetch() -> list[LiveSms]:
             r.raise_for_status()
             msgs = (r.json().get("messages") or {}).get("data") or []
             for row in msgs[:15]:
+                sender = str(row.get("in_number") or "")
+                text = str(row.get("text") or "")
+                cli = resolve_cli_display(
+                    sender=sender,
+                    text=text,
+                    recv_number=str(row.get("my_number") or ""),
+                    dial=dial,
+                )
                 out.append(
                     LiveSms(
                         id=f"os-{row.get('id', '')}",
                         country=locale,
-                        cli=str(row.get("in_number") or "Unknown"),
+                        cli=cli,
                         text=str(row.get("text") or ""),
                         code=str(row.get("code") or ""),
                         time=str(row.get("data_humans") or row.get("created_at") or ""),

@@ -11,6 +11,59 @@ _UI_JUNK = re.compile(
     re.I,
 )
 _DIGITS_ONLY = re.compile(r"^\d{6,20}$")
+_SENDER_DIGITS = re.compile(r"^\d+$")
+_BRAND_CN = re.compile(r"【([^】]{2,32})】")
+_BRAND_EN = re.compile(r"\[([A-Za-z0-9][^\]\[]]{1,30})\]")
+_MASKED = re.compile(r"^\*+[0-9Xx]{2,8}$")
+
+
+def format_recv_number(raw: str, *, dial: str = "") -> str:
+    digits = re.sub(r"\D", "", str(raw or ""))
+    if not digits:
+        return ""
+    dial_digits = re.sub(r"\D", "", dial or "")
+    if dial_digits and not digits.startswith(dial_digits):
+        return f"+{dial_digits}{digits}"
+    return f"+{digits}"
+
+
+def resolve_cli_display(
+    *,
+    sender: str,
+    text: str,
+    recv_number: str = "",
+    dial: str = "",
+) -> str:
+    """Best CLI/Sender label: service name, masked sender, or short code."""
+    sender = (sender or "").strip()
+    text = (text or "").strip()
+
+    brand = ""
+    m = _BRAND_CN.search(text) or _BRAND_EN.search(text)
+    if m:
+        brand = m.group(1).strip()
+
+    named_sender = bool(
+        sender
+        and not _SENDER_DIGITS.fullmatch(sender)
+        and sender.lower() not in {"unknown", "—"}
+    )
+
+    if named_sender:
+        if brand and (_MASKED.match(sender) or len(sender) <= 8):
+            return f"{brand} · {sender}"
+        return sender
+
+    if brand:
+        if sender and _SENDER_DIGITS.fullmatch(sender):
+            return f"{brand} · {sender}"
+        return brand
+
+    if sender:
+        return sender
+
+    recv = format_recv_number(recv_number, dial=dial)
+    return recv or "Unknown"
 
 
 def format_display_time(raw: str) -> str:

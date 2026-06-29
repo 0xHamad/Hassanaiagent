@@ -8,7 +8,7 @@ import re
 
 import requests
 
-from web.sms_platforms.base import LiveSms, is_valid_sms_row
+from web.sms_platforms.base import LiveSms, format_recv_number, is_valid_sms_row, resolve_cli_display
 
 UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -78,12 +78,16 @@ def fetch() -> list[LiveSms]:
                 sender = _clean(sender)
                 if not is_valid_sms_row(cli=sender or "Unknown", text=text):
                     continue
+                recv = f"+{cc}{num}"
+                cli = resolve_cli_display(sender=sender, text=text, recv_number=recv, dial=cc)
+                if re.fullmatch(r"\d{13,}", cli.replace(" ", "")):
+                    cli = format_recv_number(recv, dial=cc) or cli
                 h = hashlib.md5(f"{sender}|{text}".encode()).hexdigest()[:8]
                 out.append(
                     LiveSms(
                         id=f"aj-{cc}-{num}-{ts}-{h}",
                         country=label,
-                        cli=sender or "Unknown",
+                        cli=cli,
                         text=text,
                         code="",
                         time=ts,

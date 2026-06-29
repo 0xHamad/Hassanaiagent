@@ -6,7 +6,7 @@ import os
 
 import requests
 
-from web.sms_platforms.base import LiveSms
+from web.sms_platforms.base import LiveSms, is_valid_sms_row, resolve_cli_display
 
 UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -47,11 +47,12 @@ def fetch() -> list[LiveSms]:
             for row in r.json().get("messages") or []:
                 sender = str(row.get("sender") or "Unknown")
                 text = str(row.get("text") or "")
+                cli = resolve_cli_display(sender=sender, text=text)
                 out.append(
                     LiveSms(
                         id=f"7s-{row.get('_id', '')}-{row.get('code', '')}",
                         country=_country_from_sender(sender),
-                        cli=sender,
+                        cli=cli,
                         text=text,
                         code=str(row.get("code") or ""),
                         time=str(row.get("date_human") or ""),

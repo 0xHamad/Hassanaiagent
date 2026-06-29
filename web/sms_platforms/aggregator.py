@@ -14,6 +14,7 @@ _CACHE: dict | None = None
 _CACHE_AT = 0.0
 TTL = float(os.getenv("PLATFORMS_CACHE_SECONDS", "12") or "12")
 MAX_ROWS = int(os.getenv("PLATFORMS_MAX_ROWS", "150") or "150")
+MAX_PER_SOURCE = int(os.getenv("PLATFORMS_MAX_PER_SOURCE", "40") or "40")
 
 _FETCHERS = (
     ("seven_sim", seven_sim.fetch),
@@ -31,6 +32,21 @@ def _dedupe(rows: list[LiveSms]) -> list[LiveSms]:
             continue
         seen.add(row.id)
         out.append(row)
+    return out
+
+
+def _source_key(row: LiveSms) -> str:
+    return row.id.split("-", 1)[0] if "-" in row.id else row.id
+
+
+def _cap_per_source(rows: list[LiveSms]) -> list[LiveSms]:
+    counts: dict[str, int] = {}
+    out: list[LiveSms] = []
+    for row in rows:
+        key = _source_key(row)
+        counts[key] = counts.get(key, 0) + 1
+        if counts[key] <= MAX_PER_SOURCE:
+            out.append(row)
     return out
 
 
@@ -64,7 +80,7 @@ def fetch_live(*, force: bool = False) -> dict:
                 source_stats[name] = f"err:{type(e).__name__}"
 
     rows = [r for r in _sort_rows(_dedupe(rows)) if is_valid_sms_row(cli=r.cli, text=r.text)]
-    rows = rows[:MAX_ROWS]
+    rows = _cap_per_source(rows)[:MAX_ROWS]
     payload = {
         "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
         "count": len(rows),

@@ -6,7 +6,7 @@ import os
 
 import requests
 
-from web.sms_platforms.base import LiveSms
+from web.sms_platforms.base import LiveSms, resolve_cli_display
 
 UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -31,6 +31,7 @@ def fetch() -> list[LiveSms]:
             continue
         slug = str(c.get("name") or "")
         locale = str(c.get("locale") or slug.title())
+        dial = str(c.get("country") or "")
         try:
             nums = session.get(f"{BASE}/online-sms/countries/{slug}/", timeout=25).json()
         except Exception:
@@ -40,6 +41,7 @@ def fetch() -> list[LiveSms]:
             code = str(n.get("code") or "")
             if not code:
                 continue
+            recv = str(n.get("full_number") or n.get("number") or n.get("code") or "")
             try:
                 data = session.get(
                     f"{BASE}/online-sms/countries/{slug}/{code}/",
@@ -48,11 +50,19 @@ def fetch() -> list[LiveSms]:
                     timeout=25,
                 ).json()
                 for row in (data.get("data") or [])[:8]:
+                    sender = str(row.get("in_number") or "")
+                    text = str(row.get("text") or "")
+                    cli = resolve_cli_display(
+                        sender=sender,
+                        text=text,
+                        recv_number=str(row.get("my_number") or recv),
+                        dial=dial,
+                    )
                     out.append(
                         LiveSms(
                             id=f"vp-{row.get('id', '')}",
                             country=locale,
-                            cli=str(row.get("in_number") or "Unknown"),
+                            cli=cli,
                             text=str(row.get("text") or ""),
                             code=str(row.get("code") or ""),
                             time=str(row.get("data_humans") or row.get("created_at") or ""),
