@@ -12,19 +12,16 @@ _UI_JUNK = re.compile(
 )
 _DIGITS_ONLY = re.compile(r"^\d{6,20}$")
 _SENDER_DIGITS = re.compile(r"^\d+$")
+_PHONE_CLI = re.compile(r"^\+\d{8,18}$")
 _BRAND_CN = re.compile(r"【([^】]{2,32})】")
-_BRAND_EN = re.compile(r"\[([A-Za-z0-9][^\]\[]]{1,30})\]")
+_BRAND_EN = re.compile(r"\[([A-Za-z][A-Za-z0-9 ._-]{0,28})\]")
 _MASKED = re.compile(r"^\*+[0-9Xx]{2,8}$")
 
 
-def format_recv_number(raw: str, *, dial: str = "") -> str:
-    digits = re.sub(r"\D", "", str(raw or ""))
-    if not digits:
-        return ""
-    dial_digits = re.sub(r"\D", "", dial or "")
-    if dial_digits and not digits.startswith(dial_digits):
-        return f"+{dial_digits}{digits}"
-    return f"+{digits}"
+def extract_brand(text: str) -> str:
+    text = (text or "").strip()
+    m = _BRAND_CN.search(text) or _BRAND_EN.search(text)
+    return m.group(1).strip() if m else ""
 
 
 def resolve_cli_display(
@@ -34,36 +31,22 @@ def resolve_cli_display(
     recv_number: str = "",
     dial: str = "",
 ) -> str:
-    """Best CLI/Sender label: service name, masked sender, or short code."""
+    """Service / sender name only — never a phone number in the CLI column."""
+    _ = recv_number, dial
     sender = (sender or "").strip()
     text = (text or "").strip()
 
-    brand = ""
-    m = _BRAND_CN.search(text) or _BRAND_EN.search(text)
-    if m:
-        brand = m.group(1).strip()
-
-    named_sender = bool(
-        sender
-        and not _SENDER_DIGITS.fullmatch(sender)
-        and sender.lower() not in {"unknown", "—"}
-    )
-
-    if named_sender:
-        if brand and (_MASKED.match(sender) or len(sender) <= 8):
-            return f"{brand} · {sender}"
-        return sender
-
+    brand = extract_brand(text)
     if brand:
-        if sender and _SENDER_DIGITS.fullmatch(sender):
-            return f"{brand} · {sender}"
         return brand
 
-    if sender:
-        return sender
+    if sender and not _SENDER_DIGITS.fullmatch(sender) and not _PHONE_CLI.match(sender):
+        if _MASKED.match(sender):
+            return sender
+        if len(sender) <= 24 and not sender.isdigit():
+            return sender
 
-    recv = format_recv_number(recv_number, dial=dial)
-    return recv or "Unknown"
+    return "Unknown"
 
 
 def format_display_time(raw: str) -> str:
@@ -113,6 +96,12 @@ def is_valid_sms_row(*, cli: str, text: str) -> bool:
         return False
     if _UI_JUNK.search(cli) or _UI_JUNK.search(text):
         return False
+    if _PHONE_CLI.match(cli):
+        return False
+    if cli.lower() in {"unknown", "—"}:
+        brand = extract_brand(text)
+        if not brand:
+            return False
     return True
 
 

@@ -8,7 +8,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
 from web.sms_platforms import ajiema, onlinesim, seven_sim, veepn
-from web.sms_platforms.base import LiveSms, is_valid_sms_row
+from web.sms_platforms.base import LiveSms, extract_brand, is_valid_sms_row
+from web.sms_platforms import translate
 
 _CACHE: dict | None = None
 _CACHE_AT = 0.0
@@ -50,6 +51,54 @@ def _cap_per_source(rows: list[LiveSms]) -> list[LiveSms]:
     return out
 
 
+def _normalize_rows(rows: list[LiveSms]) -> list[LiveSms]:
+    out: list[LiveSms] = []
+    for row in rows:
+        cli = (row.cli or "").strip()
+        if cli.lower() in {"unknown", "—"} or not cli:
+            cli = extract_brand(row.text)
+        if not cli or cli.lower() in {"unknown", "—"}:
+            continue
+        if cli == row.cli:
+            out.append(row)
+        else:
+            out.append(
+                LiveSms(
+                    id=row.id,
+                    country=row.country,
+                    cli=cli,
+                    text=row.text,
+                    code=row.code,
+                    time=row.time,
+                    sort_key=row.sort_key,
+                )
+            )
+    return out
+
+
+def _translate_rows(rows: list[LiveSms]) -> list[LiveSms]:
+    if not translate.enabled() or not rows:
+        return rows
+    texts = translate.translate_many([r.text for r in rows])
+    out: list[LiveSms] = []
+    for i, row in enumerate(rows):
+        cli = row.cli
+        if translate.needs_translation(cli):
+            cli = translate.translate_one(cli)
+        out.append(
+            LiveSms(
+                id=row.id,
+                country=row.country,
+                cli=cli,
+                text=texts[i],
+                code=row.code,
+                time=row.time,
+                sort_key=row.sort_key,
+            )
+        )
+    return out
+
+
 def _sort_rows(rows: list[LiveSms]) -> list[LiveSms]:
     def key(r: LiveSms):
         if r.sort_key.isdigit():
@@ -79,14 +128,17 @@ def fetch_live(*, force: bool = False) -> dict:
             except Exception as e:
                 source_stats[name] = f"err:{type(e).__name__}"
 
-    rows = [r for r in _sort_rows(_dedupe(rows)) if is_valid_sms_row(cli=r.cli, text=r.text)]
+    rows = _normalize_rows(_sort_rows(_dedupe(rows)))
+    rows = [r for r in rows if is_valid_sms_row(cli=r.cli, text=r.text)]
     rows = _cap_per_source(rows)[:MAX_ROWS]
+    rows = _translate_rows(rows)
     payload = {
         "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
         "count": len(rows),
         "messages": [r.to_dict() for r in rows],
         "active_sources": len(_FETCHERS),
         "source_stats": source_stats,
+        "translate": translate.enabled(),
     }
     _CACHE = payload
     _CACHE_AT = now

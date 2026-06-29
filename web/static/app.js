@@ -498,14 +498,19 @@ function renderPlatformsFeed(data) {
 
   platformsFeed.innerHTML = rows.map(row => {
     const code = row.code
-      ? `<span class="sms-code" title="OTP">${escHtml(row.code)}</span>`
+      ? `<span class="sms-code" title="OTP code">${escHtml(row.code)}</span>`
       : '';
     const sms = escHtml(row.text || '');
-    return `<div class="platforms-row">
-      <div class="pf-cli">${escHtml(row.cli || '—')}</div>
-      <div class="pf-sms">${sms}${code ? ` ${code}` : ''}</div>
-      <div class="pf-time">${escHtml(row.time || '—')}</div>
-    </div>`;
+    return `<article class="platforms-row">
+      <div class="pf-row-top">
+        <div class="pf-cli-name">${escHtml(row.cli || '—')}</div>
+        <div class="pf-time">${escHtml(row.time || '—')}</div>
+      </div>
+      <div class="pf-row-body">
+        <p class="pf-sms">${sms}</p>
+        ${code ? `<div class="pf-code-wrap">${code}</div>` : ''}
+      </div>
+    </article>`;
   }).join('');
 }
 
