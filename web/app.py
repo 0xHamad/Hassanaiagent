@@ -28,6 +28,7 @@ from web import admin_auth  # noqa: E402
 from web import local_admin  # noqa: E402
 from web import user_settings  # noqa: E402
 from web import file_attachments  # noqa: E402
+from web import platforms_feed  # noqa: E402
 
 
 def load_env() -> None:
@@ -859,6 +860,18 @@ async def chat(
 @app.get("/api/attachments/supported")
 async def attachments_supported():
     return file_attachments.supported_payload()
+
+
+@app.get("/api/platforms/live")
+async def api_platforms_live(
+    x_token: str | None = Header(default=None, alias="x-token"),
+    force: bool = False,
+):
+    _require_auth(x_token)
+    try:
+        return platforms_feed.fetch_live(force=force)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Live feed error: {type(e).__name__}: {e}")
 
 
 @app.get("/api/env-config")

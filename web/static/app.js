@@ -68,7 +68,17 @@ const attachTray = document.getElementById('attach-tray');
 const fileInput = document.getElementById('file-input');
 const attachPopover = document.getElementById('attach-popover');
 const inputDropZone = document.getElementById('input-drop-zone');
+const platformsView = document.getElementById('platforms-view');
+const platformsFeed = document.getElementById('platforms-feed');
+const platformsUpdated = document.getElementById('platforms-updated');
+const platformsRefresh = document.getElementById('platforms-refresh');
+const inputBar = document.querySelector('.input-bar');
+const newChatBtn = document.getElementById('new-chat-btn');
 const SPLASH_MS = 4000;
+
+let mainView = 'chat';
+let platformsPollTimer = null;
+let platformsLoading = false;
 
 // ─── Boot ──────────────────────────────────────────────────────────────────────
 function clearSplashFallback() {
@@ -452,12 +462,104 @@ function addCopyButtons(container) {
 }
 
 // ─── View switching ────────────────────────────────────────────────────────────
+function escHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function stopPlatformsPoll() {
+  if (platformsPollTimer) {
+    clearInterval(platformsPollTimer);
+    platformsPollTimer = null;
+  }
+}
+
+function startPlatformsPoll() {
+  stopPlatformsPoll();
+  platformsPollTimer = setInterval(() => fetchPlatformsLive(false), 5000);
+}
+
+function renderPlatformsFeed(data) {
+  if (platformsUpdated) {
+    platformsUpdated.textContent = data?.updated_at
+      ? `Updated ${data.updated_at}${data.count != null ? ` · ${data.count} SMS` : ''}`
+      : '—';
+  }
+  if (!platformsFeed) return;
+
+  const rows = data?.messages || [];
+  if (!rows.length) {
+    platformsFeed.innerHTML = '<div class="platforms-empty">No live SMS right now — checking again shortly…</div>';
+    return;
+  }
+
+  platformsFeed.innerHTML = rows.map(row => {
+    const code = row.code
+      ? `<span class="sms-code" title="OTP">${escHtml(row.code)}</span>`
+      : '';
+    const sms = escHtml(row.text || '');
+    return `<div class="platforms-row">
+      <div class="pf-country"><span class="country-pill">${escHtml(row.country || '—')}</span></div>
+      <div class="pf-cli">${escHtml(row.cli || '—')}</div>
+      <div class="pf-sms">${sms}${code ? ` ${code}` : ''}</div>
+      <div class="pf-time">${escHtml(row.time || '—')}</div>
+    </div>`;
+  }).join('');
+}
+
+async function fetchPlatformsLive(force = false) {
+  if (!authToken || mainView !== 'platforms') return;
+  if (platformsLoading) return;
+  platformsLoading = true;
+  if (platformsRefresh) platformsRefresh.disabled = true;
+  try {
+    const url = force ? '/api/platforms/live?force=true' : '/api/platforms/live';
+    const r = await fetch(url, { headers: { 'x-token': authToken } });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    renderPlatformsFeed(await r.json());
+  } catch (e) {
+    if (platformsFeed) {
+      platformsFeed.innerHTML = `<div class="platforms-empty platforms-error">Could not load live SMS. ${escHtml(e.message)}</div>`;
+    }
+  } finally {
+    platformsLoading = false;
+    if (platformsRefresh) platformsRefresh.disabled = false;
+  }
+}
+
+function setMainView(view) {
+  mainView = view;
+  const isPlatforms = view === 'platforms';
+
+  platformsView?.classList.toggle('hidden', !isPlatforms);
+  inputBar?.classList.toggle('hidden', isPlatforms);
+  if (newChatBtn) newChatBtn.style.display = isPlatforms ? 'none' : '';
+
+  if (isPlatforms) {
+    welcomeScreen.style.display = 'none';
+    chatMessages.style.display = 'none';
+    if (platformsFeed && !platformsFeed.querySelector('.platforms-row')) {
+      platformsFeed.innerHTML = '<div class="platforms-empty">Loading live SMS…</div>';
+    }
+    startPlatformsPoll();
+    fetchPlatformsLive(false);
+    return;
+  }
+
+  stopPlatformsPoll();
+}
+
 function showChat() {
+  if (mainView !== 'chat') return;
   welcomeScreen.style.display = 'none';
   chatMessages.style.display  = 'flex';
   if (topbarTitle) topbarTitle.textContent = activeSession?.title || 'AI Chat';
 }
 function showWelcomeView() {
+  if (mainView !== 'chat') return;
   welcomeScreen.style.display = 'flex';
   chatMessages.style.display  = 'none';
   if (topbarTitle) topbarTitle.textContent = 'AI Chat';
@@ -836,6 +938,8 @@ function resetChatState() {
 // ─── Logout ────────────────────────────────────────────────────────────────────
 async function doLogout() {
   const uid = currentUser?.id;
+  stopPlatformsPoll();
+  setMainView('chat');
   try { await fetch('/api/auth/logout', { method: 'POST', headers: { 'x-token': authToken } }); } catch {}
   authToken = '';
   currentUser = null;
@@ -868,6 +972,8 @@ function bindDashboardEvents() {
   document.querySelectorAll('.quick-card').forEach(btn => {
     btn.addEventListener('click', () => sendMessage(btn.dataset.prompt));
   });
+
+  platformsRefresh?.addEventListener('click', () => fetchPlatformsLive(true));
 
   document.getElementById('new-chat-btn').addEventListener('click', async () => {
     try {
@@ -929,12 +1035,18 @@ function bindDashboardEvents() {
       const view = item.dataset.view;
       if (topbarTitle) topbarTitle.textContent = item.querySelector('span').textContent.trim();
       if (view === 'history') {
+        setMainView('chat');
         openHistoryPanel();
         closeSidebar();
       } else if (view === 'chat') {
+        setMainView('chat');
         showWelcomeView();
         closeMobilePanels();
+      } else if (view === 'platforms') {
+        setMainView('platforms');
+        closeMobilePanels();
       } else {
+        setMainView('chat');
         closeMobilePanels();
       }
     });
