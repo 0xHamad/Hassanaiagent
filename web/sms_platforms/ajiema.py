@@ -8,7 +8,7 @@ import re
 
 import requests
 
-from web.sms_platforms.base import LiveSms
+from web.sms_platforms.base import LiveSms, is_valid_sms_row
 
 UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -76,7 +76,7 @@ def fetch() -> list[LiveSms]:
             for sender, text, ts in MSG_BLOCK.findall(page):
                 text = _clean(text)
                 sender = _clean(sender)
-                if not text:
+                if not is_valid_sms_row(cli=sender or "Unknown", text=text):
                     continue
                 h = hashlib.md5(f"{sender}|{text}".encode()).hexdigest()[:8]
                 out.append(

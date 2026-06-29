@@ -502,7 +502,6 @@ function renderPlatformsFeed(data) {
       : '';
     const sms = escHtml(row.text || '');
     return `<div class="platforms-row">
-      <div class="pf-country"><span class="country-pill">${escHtml(row.country || '—')}</span></div>
       <div class="pf-cli">${escHtml(row.cli || '—')}</div>
       <div class="pf-sms">${sms}${code ? ` ${code}` : ''}</div>
       <div class="pf-time">${escHtml(row.time || '—')}</div>

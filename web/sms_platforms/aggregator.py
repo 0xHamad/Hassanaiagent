@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
 from web.sms_platforms import ajiema, onlinesim, seven_sim, veepn
-from web.sms_platforms.base import LiveSms
+from web.sms_platforms.base import LiveSms, is_valid_sms_row
 
 _CACHE: dict | None = None
 _CACHE_AT = 0.0
@@ -63,7 +63,8 @@ def fetch_live(*, force: bool = False) -> dict:
             except Exception as e:
                 source_stats[name] = f"err:{type(e).__name__}"
 
-    rows = _sort_rows(_dedupe(rows))[:MAX_ROWS]
+    rows = [r for r in _sort_rows(_dedupe(rows)) if is_valid_sms_row(cli=r.cli, text=r.text)]
+    rows = rows[:MAX_ROWS]
     payload = {
         "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
         "count": len(rows),

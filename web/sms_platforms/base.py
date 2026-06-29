@@ -2,7 +2,65 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+import re
+from dataclasses import dataclass
+from datetime import datetime, timezone
+
+_UI_JUNK = re.compile(
+    r"查看|号码列表|号码$|View number|number list|click here",
+    re.I,
+)
+_DIGITS_ONLY = re.compile(r"^\d{6,20}$")
+
+
+def format_display_time(raw: str) -> str:
+    raw = (raw or "").strip()
+    if not raw:
+        return "—"
+
+    if raw.isdigit():
+        ts = int(raw)
+        if ts > 1_000_000_000_000:
+            ts //= 1000
+        if ts > 1_000_000_000:
+            dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+            now = datetime.now(timezone.utc)
+            diff = max(0, int((now - dt).total_seconds()))
+            if diff < 45:
+                return "just now"
+            if diff < 3600:
+                mins = diff // 60
+                return f"{mins} min ago" if mins > 1 else "1 min ago"
+            if diff < 86400:
+                hrs = diff // 3600
+                return f"{hrs} hr ago" if hrs > 1 else "1 hr ago"
+            if diff < 604800:
+                days = diff // 86400
+                return f"{days} day ago" if days > 1 else "1 day ago"
+            return dt.strftime("%d %b %Y, %H:%M UTC")
+
+    if "T" in raw and len(raw) >= 19:
+        try:
+            dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.strftime("%d %b %Y, %H:%M UTC")
+        except ValueError:
+            pass
+
+    return raw
+
+
+def is_valid_sms_row(*, cli: str, text: str) -> bool:
+    text = (text or "").strip()
+    cli = (cli or "").strip()
+    if not text or len(text) < 6:
+        return False
+    if _DIGITS_ONLY.fullmatch(text):
+        return False
+    if _UI_JUNK.search(cli) or _UI_JUNK.search(text):
+        return False
+    return True
 
 
 @dataclass(frozen=True)
@@ -16,4 +74,10 @@ class LiveSms:
     sort_key: str
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        return {
+            "id": self.id,
+            "cli": self.cli,
+            "text": self.text,
+            "code": self.code,
+            "time": format_display_time(self.time),
+        }
